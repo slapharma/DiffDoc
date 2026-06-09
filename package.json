@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.1",
     "diff-match-patch": "^1.0.5",
     "lucide-react": "^0.469.0",
     "mammoth": "^1.12.0",
