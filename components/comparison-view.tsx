@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowLeftRight,
   BookOpen,
   FileText,
   GitCompare,
@@ -10,10 +11,17 @@ import {
   Layers,
   Minus,
   Plus,
+  Repeat,
   Sparkles,
 } from "lucide-react";
 import { projectRange } from "@/lib/diff/project";
 import { detectFlags, FLAG_LABELS, type FlagReason } from "@/lib/pipeline/flags";
+import {
+  pairChanges,
+  ACTION_LABELS,
+  type ChangeAction,
+  type ChangeEntry,
+} from "@/lib/pipeline/actions";
 import type { DiffChunk } from "@/lib/diff/types";
 
 export type ParagraphSkeleton = {
@@ -55,72 +63,170 @@ const MODE_META: Record<ModeId, { label: string; icon: typeof GitCompare }> = {
   summary_first: { label: "Summary-first", icon: BookOpen },
 };
 
-type Category = "flagged" | "insert" | "delete";
+type Category = "flagged" | "added" | "removed" | "changed";
 
-type RegisterEntry = {
-  chunk: DiffChunk;
-  index: number;
+type RegisterEntry = ChangeEntry & {
+  id: number;
   category: Category;
   reasons: FlagReason[];
 };
 
 const MAX_REGISTER_ENTRIES = 500;
 
+const CATEGORY_CHIP: { id: Category; label: string; activeClass: string }[] = [
+  { id: "flagged", label: "Flagged", activeClass: "bg-red-50 border-red-200 text-red-700" },
+  { id: "added", label: "Added", activeClass: "bg-green-50 border-green-200 text-green-800" },
+  { id: "removed", label: "Removed", activeClass: "bg-stone-100 border-stone-300 text-stone-700" },
+  { id: "changed", label: "Changed", activeClass: "bg-amber-50 border-amber-200 text-amber-800" },
+];
+
+const ALL_ACTIONS: ChangeAction[] = [
+  "modification",
+  "replacement",
+  "formatting",
+  "addition",
+  "deletion",
+];
+
 export function ComparisonView({ data }: { data: ComparisonData }) {
   const { comparison, parsed } = data;
   const [mode, setMode] = useState<ModeId>("side_by_side");
-  const [selectedChunk, setSelectedChunk] = useState<number | null>(null);
+  const [selected, setSelected] = useState<RegisterEntry | null>(null);
+  const [syncOn, setSyncOn] = useState(true);
   const [activeCategories, setActiveCategories] = useState<Set<Category>>(
-    () => new Set(["flagged", "insert", "delete"]),
+    () => new Set(["flagged", "added", "removed", "changed"]),
   );
+  const [activeActions, setActiveActions] = useState<Set<ChangeAction>>(
+    () => new Set(ALL_ACTIONS),
+  );
+
+  const paneARef = useRef<HTMLDivElement>(null);
+  const paneBRef = useRef<HTMLDivElement>(null);
+  // Suppresses scroll-sync feedback loops and sync-during-jump.
+  const syncLockUntil = useRef(0);
 
   const entries = useMemo<RegisterEntry[]>(
     () =>
-      parsed.chunks
-        .map((chunk, index) => ({ chunk, index }))
-        .filter(({ chunk }) => chunk.op !== "equal" && chunk.text.trim().length > 0)
-        .map(({ chunk, index }) => {
-          const reasons = detectFlags(chunk.text);
-          return {
-            chunk,
-            index,
-            reasons,
-            category: (reasons.length > 0
-              ? "flagged"
-              : chunk.op) as Category,
-          };
-        }),
+      pairChanges(parsed.chunks).map((change, id) => {
+        const reasons = detectFlags(`${change.before ?? ""} ${change.after ?? ""}`);
+        const category: Category =
+          reasons.length > 0
+            ? "flagged"
+            : change.action === "addition"
+              ? "added"
+              : change.action === "deletion"
+                ? "removed"
+                : "changed";
+        return { ...change, id, category, reasons };
+      }),
     [parsed.chunks],
   );
 
-  const counts = useMemo(() => {
-    const c: Record<Category, number> = { flagged: 0, insert: 0, delete: 0 };
-    for (const e of entries) c[e.category]++;
-    return c;
+  const categoryCounts = useMemo(() => {
+    const counts: Record<Category, number> = { flagged: 0, added: 0, removed: 0, changed: 0 };
+    for (const e of entries) counts[e.category]++;
+    return counts;
   }, [entries]);
 
-  const visible = entries.filter((e) => activeCategories.has(e.category));
+  const actionCounts = useMemo(() => {
+    const counts = {} as Record<ChangeAction, number>;
+    for (const a of ALL_ACTIONS) counts[a] = 0;
+    for (const e of entries) counts[e.action]++;
+    return counts;
+  }, [entries]);
+
+  const visible = entries.filter(
+    (e) => activeCategories.has(e.category) && activeActions.has(e.action),
+  );
   const shown = visible.slice(0, MAX_REGISTER_ENTRIES);
 
   const recommended = (comparison.view_mode ?? "side_by_side") as ModeId;
   const similarity = comparison.similarity_score;
 
-  function toggleCategory(cat: Category) {
-    setActiveCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat);
-      else next.add(cat);
-      return next;
-    });
+  function toggleIn<T>(set: Set<T>, value: T, update: (next: Set<T>) => void) {
+    const next = new Set(set);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    update(next);
+  }
+
+  function paneEl(pane: "a" | "b") {
+    return pane === "a" ? paneARef.current : paneBRef.current;
+  }
+
+  function findNearestSpan(
+    container: HTMLElement,
+    pane: "a" | "b",
+    index: number,
+  ): HTMLElement | null {
+    for (let distance = 0; distance < 50; distance++) {
+      const candidates = distance === 0 ? [index] : [index - distance, index + distance];
+      for (const k of candidates) {
+        if (k < 0) continue;
+        const el = container.querySelector<HTMLElement>(`[data-chunk="${pane}-${k}"]`);
+        if (el) return el;
+      }
+    }
+    return null;
   }
 
   function jumpTo(entry: RegisterEntry) {
-    setSelectedChunk(entry.index);
-    const pane = entry.chunk.op === "delete" ? "a" : "b";
-    document
-      .querySelector(`[data-chunk="${pane}-${entry.index}"]`)
-      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setSelected(entry);
+    syncLockUntil.current = Date.now() + 800; // let smooth scrolls settle
+    const sides: { pane: "a" | "b"; own: number | undefined; other: number | undefined }[] = [
+      { pane: "a", own: entry.deleteIndex, other: entry.insertIndex },
+      { pane: "b", own: entry.insertIndex, other: entry.deleteIndex },
+    ];
+    for (const { pane, own, other } of sides) {
+      const container = paneEl(pane);
+      if (!container) continue;
+      let el: HTMLElement | null =
+        own !== undefined
+          ? container.querySelector(`[data-chunk="${pane}-${own}"]`)
+          : null;
+      if (!el) {
+        // This pane doesn't contain the change — only follow when syncing.
+        if (!syncOn) continue;
+        const anchor = own ?? other;
+        if (anchor === undefined) continue;
+        el = findNearestSpan(container, pane, anchor);
+      }
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   }
+
+  function handlePaneScroll(source: "a" | "b") {
+    if (!syncOn || mode !== "side_by_side") return;
+    if (Date.now() < syncLockUntil.current) return;
+    const src = paneEl(source);
+    const dst = paneEl(source === "a" ? "b" : "a");
+    if (!src || !dst) return;
+    requestAnimationFrame(() => {
+      if (Date.now() < syncLockUntil.current) return;
+      const srcRect = src.getBoundingClientRect();
+      const probeY = srcRect.top + Math.min(150, srcRect.height / 3);
+      let anchor: HTMLElement | null = null;
+      for (const el of src.querySelectorAll<HTMLElement>("[data-chunk]")) {
+        if (el.getBoundingClientRect().bottom >= probeY) {
+          anchor = el;
+          break;
+        }
+      }
+      if (!anchor?.dataset.chunk) return;
+      const index = Number(anchor.dataset.chunk.split("-")[1]);
+      const target = findNearestSpan(dst, source === "a" ? "b" : "a", index);
+      if (!target) return;
+      const delta = target.getBoundingClientRect().top - anchor.getBoundingClientRect().top;
+      if (Math.abs(delta) < 2) return;
+      syncLockUntil.current = Date.now() + 120;
+      dst.scrollTop += delta;
+    });
+  }
+
+  const selectedIndices = {
+    a: selected?.deleteIndex ?? null,
+    b: selected?.insertIndex ?? null,
+  };
 
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900 font-sans">
@@ -159,23 +265,37 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               )}
             </span>
           </div>
-          <div className="flex items-center gap-1 bg-white border border-stone-200 rounded-md p-0.5">
-            {(Object.keys(MODE_META) as ModeId[]).map((id) => {
-              const Icon = MODE_META[id].icon;
-              const active = mode === id;
-              return (
-                <button
-                  key={id}
-                  onClick={() => setMode(id)}
-                  className={`px-2.5 py-1 text-xs font-medium rounded flex items-center gap-1.5 transition-colors ${
-                    active ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-50"
-                  }`}
-                >
-                  <Icon className="w-3 h-3" />
-                  {MODE_META[id].label}
-                </button>
-              );
-            })}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSyncOn((v) => !v)}
+              title="When on, both documents scroll together and clicking a change aligns both panes."
+              className={`px-2.5 py-1 text-xs font-medium rounded-md border flex items-center gap-1.5 transition-colors ${
+                syncOn
+                  ? "bg-stone-900 text-white border-stone-900"
+                  : "bg-white text-stone-600 border-stone-200 hover:bg-stone-50"
+              }`}
+            >
+              <ArrowLeftRight className="w-3 h-3" />
+              Move in sync
+            </button>
+            <div className="flex items-center gap-1 bg-white border border-stone-200 rounded-md p-0.5">
+              {(Object.keys(MODE_META) as ModeId[]).map((id) => {
+                const Icon = MODE_META[id].icon;
+                const active = mode === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setMode(id)}
+                    className={`px-2.5 py-1 text-xs font-medium rounded flex items-center gap-1.5 transition-colors ${
+                      active ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-50"
+                    }`}
+                  >
+                    <Icon className="w-3 h-3" />
+                    {MODE_META[id].label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </header>
@@ -189,28 +309,34 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               </h3>
               <span className="font-mono text-xs text-stone-400">{entries.length} total</span>
             </div>
+            <div className="flex flex-wrap gap-1 mb-3">
+              {CATEGORY_CHIP.map((chip) => (
+                <FilterChip
+                  key={chip.id}
+                  label={chip.label}
+                  count={categoryCounts[chip.id]}
+                  active={activeCategories.has(chip.id)}
+                  activeClass={chip.activeClass}
+                  onClick={() =>
+                    toggleIn(activeCategories, chip.id, setActiveCategories)
+                  }
+                />
+              ))}
+            </div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-stone-400 mb-1.5">
+              Action
+            </div>
             <div className="flex flex-wrap gap-1">
-              <FilterChip
-                label="Flagged"
-                count={counts.flagged}
-                active={activeCategories.has("flagged")}
-                activeClass="bg-red-50 border-red-200 text-red-700"
-                onClick={() => toggleCategory("flagged")}
-              />
-              <FilterChip
-                label="Added"
-                count={counts.insert}
-                active={activeCategories.has("insert")}
-                activeClass="bg-green-50 border-green-200 text-green-800"
-                onClick={() => toggleCategory("insert")}
-              />
-              <FilterChip
-                label="Removed"
-                count={counts.delete}
-                active={activeCategories.has("delete")}
-                activeClass="bg-stone-100 border-stone-300 text-stone-700"
-                onClick={() => toggleCategory("delete")}
-              />
+              {ALL_ACTIONS.filter((a) => actionCounts[a] > 0).map((action) => (
+                <FilterChip
+                  key={action}
+                  label={ACTION_LABELS[action]}
+                  count={actionCounts[action]}
+                  active={activeActions.has(action)}
+                  activeClass="bg-blue-50 border-blue-200 text-blue-800"
+                  onClick={() => toggleIn(activeActions, action, setActiveActions)}
+                />
+              ))}
             </div>
           </div>
 
@@ -221,40 +347,33 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               </p>
             )}
             {shown.map((entry) => {
-              const isSelected = selectedChunk === entry.index;
-              const insert = entry.chunk.op === "insert";
+              const isSelected = selected?.id === entry.id;
               const borderClass =
                 entry.category === "flagged"
                   ? "border-l-red-500 bg-red-50/40"
-                  : insert
+                  : entry.category === "added"
                     ? "border-l-green-500 bg-green-50/40"
-                    : "border-l-stone-400 bg-white";
+                    : entry.category === "changed"
+                      ? "border-l-amber-500 bg-amber-50/40"
+                      : "border-l-stone-400 bg-white";
               return (
                 <button
-                  key={entry.index}
+                  key={entry.id}
                   onClick={() => jumpTo(entry)}
                   className={`w-full text-left px-3 py-2.5 border-l-2 border-b border-stone-100 hover:bg-stone-50 transition-colors ${borderClass} ${
                     isSelected ? "ring-1 ring-stone-900 bg-stone-50" : ""
                   }`}
                 >
                   <div className="flex items-center gap-2 mb-1">
-                    {entry.category === "flagged" ? (
-                      <AlertTriangle className="w-3 h-3 text-red-600 flex-shrink-0" />
-                    ) : insert ? (
-                      <Plus className="w-3 h-3 text-green-700 flex-shrink-0" />
-                    ) : (
-                      <Minus className="w-3 h-3 text-stone-500 flex-shrink-0" />
-                    )}
+                    <EntryIcon entry={entry} />
                     <span className="text-[10px] uppercase tracking-wide text-stone-400 truncate">
-                      {entry.reasons.length > 0
-                        ? entry.reasons.map((r) => FLAG_LABELS[r]).join(" · ")
-                        : insert
-                          ? "Added in B"
-                          : "Removed from A"}
+                      {ACTION_LABELS[entry.action]}
+                      {entry.reasons.length > 0 &&
+                        ` · ${entry.reasons.map((r) => FLAG_LABELS[r]).join(" · ")}`}
                     </span>
                   </div>
                   <p className="text-sm text-stone-800 leading-snug line-clamp-2">
-                    {snippet(entry.chunk.text)}
+                    {entrySnippet(entry)}
                   </p>
                 </button>
               );
@@ -275,7 +394,9 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 label={comparison.doc_a_name ?? "Document A"}
                 doc={parsed.doc_a}
                 chunks={parsed.chunks}
-                selectedChunk={selectedChunk}
+                selectedIndex={selectedIndices.a}
+                scrollRef={paneARef}
+                onScroll={() => handlePaneScroll("a")}
               />
               <div className="w-px bg-stone-200" />
               <DocPane
@@ -283,7 +404,9 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 label={comparison.doc_b_name ?? "Document B"}
                 doc={parsed.doc_b}
                 chunks={parsed.chunks}
-                selectedChunk={selectedChunk}
+                selectedIndex={selectedIndices.b}
+                scrollRef={paneBRef}
+                onScroll={() => handlePaneScroll("b")}
               />
             </div>
           ) : (
@@ -321,6 +444,23 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
       </footer>
     </div>
   );
+}
+
+function EntryIcon({ entry }: { entry: RegisterEntry }) {
+  if (entry.category === "flagged")
+    return <AlertTriangle className="w-3 h-3 text-red-600 flex-shrink-0" />;
+  if (entry.action === "addition")
+    return <Plus className="w-3 h-3 text-green-700 flex-shrink-0" />;
+  if (entry.action === "deletion")
+    return <Minus className="w-3 h-3 text-stone-500 flex-shrink-0" />;
+  return <Repeat className="w-3 h-3 text-amber-700 flex-shrink-0" />;
+}
+
+function entrySnippet(entry: RegisterEntry): string {
+  if (entry.before !== undefined && entry.after !== undefined) {
+    return `${snippet(entry.before, 42)} → ${snippet(entry.after, 42)}`;
+  }
+  return snippet(entry.before ?? entry.after ?? "", 90);
 }
 
 function FilterChip({
@@ -373,13 +513,17 @@ function DocPane({
   label,
   doc,
   chunks,
-  selectedChunk,
+  selectedIndex,
+  scrollRef,
+  onScroll,
 }: {
   pane: "a" | "b";
   label: string;
   doc: ComparisonData["parsed"]["doc_a"];
   chunks: DiffChunk[];
-  selectedChunk: number | null;
+  selectedIndex: number | null;
+  scrollRef: React.RefObject<HTMLDivElement>;
+  onScroll: () => void;
 }) {
   const meta = doc.metadata;
   const paragraphs = doc.paragraphs;
@@ -394,7 +538,7 @@ function DocPane({
           {meta?.wordCount ? `${meta.wordCount.toLocaleString()} words` : ""}
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-8 py-6">
         <div className="max-w-2xl mx-auto font-serif">
           {paragraphs && paragraphs.length > 0 ? (
             paragraphs.map((p, pi) => {
@@ -407,7 +551,7 @@ function DocPane({
                     <span
                       key={si}
                       data-chunk={`${pane}-${s.chunkIndex}`}
-                      className={segmentClass(s.op, selectedChunk === s.chunkIndex)}
+                      className={segmentClass(s.op, selectedIndex === s.chunkIndex)}
                     >
                       {s.text}
                     </span>
@@ -425,7 +569,7 @@ function DocPane({
                   <span
                     key={index}
                     data-chunk={`${pane}-${index}`}
-                    className={segmentClass(chunk.op, selectedChunk === index)}
+                    className={segmentClass(chunk.op, selectedIndex === index)}
                   >
                     {chunk.text}
                   </span>
