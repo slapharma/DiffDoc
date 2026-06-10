@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { ComparisonView, type ComparisonData } from "@/components/comparison-view";
 
@@ -11,6 +11,7 @@ const POLL_MS = 1500;
 export default function ComparisonPage({ params }: { params: { id: string } }) {
   const [status, setStatus] = useState<Status>("loading");
   const [data, setData] = useState<ComparisonData | null>(null);
+  const processTriggered = useRef(false);
 
   const fetchComparison = useCallback(async (): Promise<Status> => {
     const res = await fetch(`/api/comparisons/${params.id}`, { cache: "no-store" });
@@ -18,6 +19,17 @@ export default function ComparisonPage({ params }: { params: { id: string } }) {
     if (!res.ok) return "failed";
     const body = await res.json();
     const s: Status = body.comparison.status;
+    if (s === "pending" && !processTriggered.current) {
+      // Self-healing: if the upload page's fire-and-forget trigger was lost,
+      // (re)start processing from here. The process route only accepts
+      // pending comparisons, so a duplicate trigger is harmless.
+      processTriggered.current = true;
+      void fetch("/api/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comparison_id: params.id }),
+      });
+    }
     if (s === "complete" && body.parsed) {
       setData({ comparison: body.comparison, parsed: body.parsed });
     }

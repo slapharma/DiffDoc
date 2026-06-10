@@ -48,6 +48,18 @@ describe("chunksToDifferenceRows", () => {
     expect(ins.location_b).toEqual({ offset: 12, length: 4 });
   });
 
+  it("applies local flag heuristics to changed text", () => {
+    const chunks: DiffChunk[] = [
+      { op: "delete", text: "20mg", offsetA: 0, offsetB: 0 },
+      { op: "insert", text: "a clearer wording", offsetA: 4, offsetB: 0 },
+    ];
+    const [numeric, neutral] = chunksToDifferenceRows(ID, chunks);
+    expect(numeric.flagged).toBe(true);
+    expect(numeric.flag_reasons).toContain("number");
+    expect(neutral.flagged).toBe(false);
+    expect(neutral.flag_reasons).toEqual([]);
+  });
+
   it("returns no rows for identical documents", () => {
     const chunks: DiffChunk[] = [
       { op: "equal", text: "same", offsetA: 0, offsetB: 0 },

@@ -20,22 +20,26 @@ export type ProcessResult =
 export async function processComparison(comparisonId: string): Promise<ProcessResult> {
   const supabase = getServiceClient();
 
-  const { data: comparison, error: fetchError } = await supabase
+  // Atomically claim the comparison (pending -> processing). Both the upload
+  // page and the comparison page may trigger processing; the status guard in
+  // the WHERE clause ensures exactly one caller wins and the other no-ops.
+  const { data: comparison, error: claimError } = await supabase
     .from("comparisons")
-    .select("id, doc_a_path, doc_a_name, doc_b_path, doc_b_name, status")
+    .update({ status: "processing" })
     .eq("id", comparisonId)
-    .single();
-  if (fetchError || !comparison) {
-    return { ok: false, error: `Comparison not found: ${fetchError?.message ?? comparisonId}` };
+    .eq("status", "pending")
+    .select("id, doc_a_path, doc_a_name, doc_b_path, doc_b_name")
+    .maybeSingle();
+  if (claimError) {
+    return { ok: false, error: `Could not claim comparison: ${claimError.message}` };
   }
-  if (comparison.status !== "pending") {
-    return { ok: false, error: `Comparison is ${comparison.status}, expected pending.` };
+  if (!comparison) {
+    return { ok: false, error: "Comparison not found or not pending." };
   }
   if (!comparison.doc_a_path || !comparison.doc_b_path) {
+    await supabase.from("comparisons").update({ status: "failed" }).eq("id", comparisonId);
     return { ok: false, error: "Comparison has no stored documents." };
   }
-
-  await supabase.from("comparisons").update({ status: "processing" }).eq("id", comparisonId);
 
   try {
     const [bufA, bufB] = await Promise.all([
@@ -53,10 +57,20 @@ export async function processComparison(comparisonId: string): Promise<ProcessRe
     const viewMode = selectViewMode(similarityScore);
 
     // Persist the full chunk stream (including equal runs) so the UI can
-    // reconstruct both documents without re-parsing.
+    // reconstruct both documents without re-parsing. Paragraph skeletons
+    // (style + offsets, no text — text comes from the chunks) let the UI
+    // render headings and structure instead of a flat text wall.
     const chunksPayload = JSON.stringify({
-      doc_a: { name: comparison.doc_a_name, metadata: docA.metadata },
-      doc_b: { name: comparison.doc_b_name, metadata: docB.metadata },
+      doc_a: {
+        name: comparison.doc_a_name,
+        metadata: docA.metadata,
+        paragraphs: paragraphSkeletons(docA),
+      },
+      doc_b: {
+        name: comparison.doc_b_name,
+        metadata: docB.metadata,
+        paragraphs: paragraphSkeletons(docB),
+      },
       chunks: diff.chunks,
     });
     const { error: chunksError } = await supabase.storage
@@ -107,6 +121,39 @@ export async function processComparison(comparisonId: string): Promise<ProcessRe
     });
     return { ok: false, error: message };
   }
+}
+
+type ParagraphSkeleton = {
+  style: string;
+  offset: number;
+  length: number;
+  page?: number;
+};
+
+function paragraphSkeletons(doc: {
+  sections: {
+    heading: string | null;
+    level: number;
+    offset: number;
+    paragraphs: { style: string; offset: number; length: number; page?: number }[];
+  }[];
+}): ParagraphSkeleton[] {
+  return doc.sections.flatMap((section) => {
+    const skeletons: ParagraphSkeleton[] = [];
+    // Headings live on the section, not in its paragraph list — re-emit them
+    // as paragraphs so the UI renders them in place.
+    if (section.heading !== null) {
+      skeletons.push({
+        style: `heading${Math.min(4, Math.max(1, section.level))}`,
+        offset: section.offset,
+        length: section.heading.length,
+      });
+    }
+    for (const { style, offset, length, page } of section.paragraphs) {
+      skeletons.push({ style, offset, length, ...(page !== undefined ? { page } : {}) });
+    }
+    return skeletons;
+  });
 }
 
 async function downloadToBuffer(path: string): Promise<Buffer> {

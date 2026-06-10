@@ -1,4 +1,5 @@
 import type { DiffChunk } from "@/lib/diff/types";
+import { detectFlags } from "./flags";
 
 /** Shape of a `differences` table insert (Phase 1 — no AI classification yet). */
 export type DifferenceRow = {
@@ -6,6 +7,8 @@ export type DifferenceRow = {
   location_a: { offset: number; length: number };
   location_b: { offset: number; length: number };
   type: "insert" | "delete";
+  flagged: boolean;
+  flag_reasons: string[];
 };
 
 /** Safety cap so a pathological diff can't write unbounded rows. */
@@ -25,8 +28,11 @@ export function chunksToDifferenceRows(
   for (const chunk of chunks) {
     if (chunk.op === "equal") continue;
     if (rows.length >= MAX_DIFFERENCE_ROWS) break;
+    const reasons = detectFlags(chunk.text);
     rows.push({
       comparison_id: comparisonId,
+      flagged: reasons.length > 0,
+      flag_reasons: reasons,
       location_a: {
         offset: chunk.offsetA,
         length: chunk.op === "delete" ? chunk.text.length : 0,

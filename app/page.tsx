@@ -1,10 +1,19 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, GitCompare, Loader2, Upload, X } from "lucide-react";
+import { Clock, FileText, GitCompare, Loader2, Upload, X } from "lucide-react";
 
 type Side = "a" | "b";
+
+type RecentComparison = {
+  id: string;
+  doc_a_name: string | null;
+  doc_b_name: string | null;
+  similarity_score: number | null;
+  status: string;
+  created_at: string;
+};
 
 export default function Home() {
   const router = useRouter();
@@ -55,7 +64,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="flex-1 flex items-center justify-center px-6">
+      <main className="flex-1 flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-3xl">
           <div className="text-center mb-10">
             <h1 className="text-3xl font-bold font-serif mb-2">Compare two documents</h1>
@@ -107,12 +116,75 @@ export default function Home() {
               )}
             </button>
           </div>
+
+          <RecentComparisons />
         </div>
       </main>
 
       <footer className="border-t border-stone-200 bg-white px-6 py-2 text-xs text-stone-500 font-mono text-center">
         v0.1.0-beta
       </footer>
+    </div>
+  );
+}
+
+function RecentComparisons() {
+  const [items, setItems] = useState<RecentComparison[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/comparisons", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (!cancelled && body) setItems(body.comparisons);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!items || items.length === 0) return null;
+
+  return (
+    <div className="mt-12">
+      <h2 className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-3 flex items-center gap-1.5">
+        <Clock className="w-3.5 h-3.5" /> Recent comparisons
+      </h2>
+      <div className="bg-white border border-stone-200 rounded-lg divide-y divide-stone-100">
+        {items.map((item) => (
+          <a
+            key={item.id}
+            href={`/c/${item.id}`}
+            className="flex items-center gap-3 px-4 py-2.5 hover:bg-stone-50 transition-colors"
+          >
+            <FileText className="w-4 h-4 text-stone-400 flex-shrink-0" />
+            <span className="flex-1 min-w-0 text-sm text-stone-800 truncate">
+              {item.doc_a_name ?? "Document A"}{" "}
+              <span className="text-stone-400">vs</span>{" "}
+              {item.doc_b_name ?? "Document B"}
+            </span>
+            {item.status === "complete" && item.similarity_score != null ? (
+              <span className="font-mono text-xs text-stone-500">
+                {item.similarity_score}%
+              </span>
+            ) : (
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full ${
+                  item.status === "failed"
+                    ? "bg-red-50 text-red-700"
+                    : "bg-amber-50 text-amber-700"
+                }`}
+              >
+                {item.status}
+              </span>
+            )}
+            <span className="text-xs text-stone-400 font-mono w-20 text-right">
+              {new Date(item.created_at).toLocaleDateString()}
+            </span>
+          </a>
+        ))}
+      </div>
     </div>
   );
 }

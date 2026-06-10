@@ -206,7 +206,11 @@ function groupIntoSections(paragraphs: Paragraph[]): Section[] {
       };
       continue;
     }
-    if (current.paragraphs.length === 0) current.offset = p.offset;
+    // Only the implicit pre-heading section takes its offset from the first
+    // body paragraph; a headed section's offset is its heading's position.
+    if (current.paragraphs.length === 0 && current.heading === null) {
+      current.offset = p.offset;
+    }
     current.paragraphs.push(p);
   }
   finalize(current);
