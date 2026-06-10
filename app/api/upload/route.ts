@@ -103,8 +103,10 @@ export async function POST(request: Request): Promise<Response> {
     id: comparisonId,
     doc_a_path: a.storagePath,
     doc_a_hash: a.hash,
+    doc_a_name: a.filename,
     doc_b_path: b.storagePath,
     doc_b_hash: b.hash,
+    doc_b_name: b.filename,
     status: "pending",
   });
   if (insertError) {
