@@ -1,0 +1,88 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { AlertTriangle, Loader2 } from "lucide-react";
+import { ComparisonView, type ComparisonData } from "@/components/comparison-view";
+
+type Status = "loading" | "pending" | "processing" | "complete" | "failed" | "missing";
+
+const POLL_MS = 1500;
+
+export default function ComparisonPage({ params }: { params: { id: string } }) {
+  const [status, setStatus] = useState<Status>("loading");
+  const [data, setData] = useState<ComparisonData | null>(null);
+
+  const fetchComparison = useCallback(async (): Promise<Status> => {
+    const res = await fetch(`/api/comparisons/${params.id}`, { cache: "no-store" });
+    if (res.status === 404 || res.status === 400) return "missing";
+    if (!res.ok) return "failed";
+    const body = await res.json();
+    const s: Status = body.comparison.status;
+    if (s === "complete" && body.parsed) {
+      setData({ comparison: body.comparison, parsed: body.parsed });
+    }
+    return s;
+  }, [params.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    async function tick() {
+      try {
+        const s = await fetchComparison();
+        if (cancelled) return;
+        setStatus(s);
+        if (s === "pending" || s === "processing") {
+          timer = setTimeout(tick, POLL_MS);
+        }
+      } catch {
+        if (!cancelled) timer = setTimeout(tick, POLL_MS);
+      }
+    }
+
+    void tick();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [fetchComparison]);
+
+  if (status === "complete" && data) return <ComparisonView data={data} />;
+
+  return (
+    <div className="min-h-screen bg-stone-50 flex items-center justify-center font-sans">
+      <div className="text-center max-w-sm px-6">
+        {status === "failed" || status === "missing" ? (
+          <>
+            <AlertTriangle className="w-8 h-8 text-red-600 mx-auto mb-3" />
+            <h1 className="font-semibold text-stone-900 mb-2">
+              {status === "missing" ? "Comparison not found" : "Processing failed"}
+            </h1>
+            <p className="text-sm text-stone-600 mb-4">
+              {status === "missing"
+                ? "This comparison doesn't exist or the link is wrong."
+                : "Something went wrong while parsing or diffing the documents."}
+            </p>
+            <a
+              href="/"
+              className="inline-block px-4 py-1.5 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800"
+            >
+              Start a new comparison
+            </a>
+          </>
+        ) : (
+          <>
+            <Loader2 className="w-8 h-8 text-stone-700 mx-auto mb-3 animate-spin" />
+            <h1 className="font-semibold text-stone-900 mb-1">
+              {status === "processing" ? "Comparing documents…" : "Preparing comparison…"}
+            </h1>
+            <p className="text-sm text-stone-500">
+              Parsing both files and computing the diff. Usually takes a few seconds.
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
