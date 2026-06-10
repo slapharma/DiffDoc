@@ -31,22 +31,39 @@ export default function Home() {
     setBusy(true);
     setError(null);
     try {
-      const form = new FormData();
-      form.set("doc_a", files.a);
-      form.set("doc_b", files.b);
-      const res = await fetch("/api/upload", { method: "POST", body: form });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Upload failed.");
+      // 1. Ask the API for signed Storage upload URLs (files don't pass
+      //    through Vercel — its 4.5 MB body limit would reject large docs).
+      const init = await postJson("/api/upload/init", {
+        doc_a: { name: files.a.name, size: files.a.size },
+        doc_b: { name: files.b.name, size: files.b.size },
+      });
+
+      // 2. Upload both files straight to Supabase Storage.
+      const { getBrowserClient } = await import("@/lib/supabase/client");
+      const storage = getBrowserClient().storage.from("documents");
+      const [upA, upB] = await Promise.all([
+        storage.uploadToSignedUrl(init.doc_a.path, init.doc_a.token, files.a),
+        storage.uploadToSignedUrl(init.doc_b.path, init.doc_b.token, files.b),
+      ]);
+      const upError = upA.error ?? upB.error;
+      if (upError) throw new Error(`Upload failed: ${upError.message}`);
+
+      // 3. Server validates the real bytes and creates the comparison.
+      const done = await postJson("/api/upload/complete", {
+        comparison_id: init.comparison_id,
+        doc_a_name: files.a.name,
+        doc_b_name: files.b.name,
+      });
 
       // Fire the processing pipeline without awaiting — the comparison page
-      // polls status, so navigation shouldn't wait for the parse to finish.
+      // polls status and self-heals if this trigger is lost.
       void fetch("/api/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ comparison_id: body.comparison_id }),
+        body: JSON.stringify({ comparison_id: done.comparison_id }),
       });
 
-      router.push(`/c/${body.comparison_id}`);
+      router.push(`/c/${done.comparison_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setBusy(false);
@@ -126,6 +143,34 @@ export default function Home() {
       </footer>
     </div>
   );
+}
+
+/**
+ * POST JSON and parse the response defensively — platform-level errors
+ * (e.g. proxy limits) return plain text, which must surface as a readable
+ * message rather than a JSON parse error.
+ */
+async function postJson(
+  url: string,
+  payload: unknown,
+): Promise<Record<string, any>> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  let body: Record<string, any> | null = null;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    // not JSON — fall through to the status-based error below
+  }
+  if (!res.ok) {
+    throw new Error(body?.error ?? `Request failed (${res.status}): ${text.slice(0, 120)}`);
+  }
+  if (!body) throw new Error("Unexpected non-JSON response from the server.");
+  return body;
 }
 
 function RecentComparisons() {
