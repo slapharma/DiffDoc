@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeftRight,
+  ArrowUpToLine,
   BookOpen,
+  Crosshair,
   FileText,
   GitCompare,
   Hash,
@@ -15,6 +17,13 @@ import {
   Sparkles,
 } from "lucide-react";
 import { projectRange } from "@/lib/diff/project";
+import {
+  measureAnchors,
+  mapY,
+  contentY,
+  nearestAnchorPosition,
+  type AnchorMap,
+} from "@/lib/diff/scroll-map";
 import { detectFlags, FLAG_LABELS, type FlagReason } from "@/lib/pipeline/flags";
 import {
   pairChanges,
@@ -72,6 +81,8 @@ type RegisterEntry = ChangeEntry & {
 };
 
 const MAX_REGISTER_ENTRIES = 500;
+/** Viewport offset (px from pane top) used as the sync reading line. */
+const PROBE = 120;
 
 const CATEGORY_CHIP: { id: Category; label: string; activeClass: string }[] = [
   { id: "flagged", label: "Flagged", activeClass: "bg-red-50 border-red-200 text-red-700" },
@@ -88,11 +99,17 @@ const ALL_ACTIONS: ChangeAction[] = [
   "deletion",
 ];
 
+type Pane = "a" | "b";
+
+type ContextMenuState = { x: number; y: number; pane: Pane; index: number };
+
 export function ComparisonView({ data }: { data: ComparisonData }) {
   const { comparison, parsed } = data;
   const [mode, setMode] = useState<ModeId>("side_by_side");
   const [selected, setSelected] = useState<RegisterEntry | null>(null);
   const [syncOn, setSyncOn] = useState(true);
+  const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const [flash, setFlash] = useState<{ pane: Pane; index: number } | null>(null);
   const [activeCategories, setActiveCategories] = useState<Set<Category>>(
     () => new Set(["flagged", "added", "removed", "changed"]),
   );
@@ -102,8 +119,10 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
 
   const paneARef = useRef<HTMLDivElement>(null);
   const paneBRef = useRef<HTMLDivElement>(null);
-  // Suppresses scroll-sync feedback loops and sync-during-jump.
-  const syncLockUntil = useRef(0);
+  const anchorsRef = useRef<AnchorMap | null>(null);
+  /** The pane the user is physically scrolling — the only sync source. */
+  const activePane = useRef<Pane | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const entries = useMemo<RegisterEntry[]>(
     () =>
@@ -143,6 +162,176 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
   const recommended = (comparison.view_mode ?? "side_by_side") as ModeId;
   const similarity = comparison.similarity_score;
 
+  function paneEl(pane: Pane) {
+    return pane === "a" ? paneARef.current : paneBRef.current;
+  }
+
+  // Measure alignment anchors once per layout, not per scroll. Re-measure on
+  // content size changes (fonts, images, container resize).
+  useEffect(() => {
+    if (mode !== "side_by_side") return;
+    const a = paneARef.current;
+    const b = paneBRef.current;
+    if (!a || !b) return;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const remeasure = () => {
+      anchorsRef.current = measureAnchors(a, b);
+    };
+    remeasure();
+
+    const observer = new ResizeObserver(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(remeasure, 150);
+    });
+    if (a.firstElementChild) observer.observe(a.firstElementChild);
+    if (b.firstElementChild) observer.observe(b.firstElementChild);
+    return () => {
+      observer.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [mode, data]);
+
+  useEffect(() => {
+    return () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+    };
+  }, []);
+
+  function handlePaneScroll(pane: Pane) {
+    // Only the pane the user is interacting with drives the sync; the echo
+    // scroll event from the follower pane is ignored, so there is no
+    // feedback loop and no timing locks. The mapping is O(log n) with no
+    // layout reads, so it runs synchronously — scroll events are already
+    // frame-aligned and deferring to rAF only adds lag.
+    if (!syncOn || mode !== "side_by_side") return;
+    if (activePane.current !== pane) return;
+    const map = anchorsRef.current;
+    const src = paneEl(pane);
+    const dst = paneEl(pane === "a" ? "b" : "a");
+    if (!map || !src || !dst) return;
+    const y = src.scrollTop + PROBE;
+    const mapped =
+      pane === "a" ? mapY(map.aTops, map.bTops, y) : mapY(map.bTops, map.aTops, y);
+    dst.scrollTop = Math.max(0, mapped - PROBE);
+  }
+
+  function scrollPaneTo(pane: Pane, top: number, smooth = true) {
+    paneEl(pane)?.scrollTo({ top: Math.max(0, top), behavior: smooth ? "smooth" : "auto" });
+  }
+
+  /** Center a content-space Y in a pane's viewport. */
+  function centerOn(pane: Pane, y: number) {
+    const el = paneEl(pane);
+    if (!el) return;
+    scrollPaneTo(pane, y - el.clientHeight / 2);
+  }
+
+  function spanIn(pane: Pane, index: number): HTMLElement | null {
+    return paneEl(pane)?.querySelector(`[data-chunk="${pane}-${index}"]`) ?? null;
+  }
+
+  function jumpTo(entry: RegisterEntry) {
+    setSelected(entry);
+    activePane.current = null; // programmatic scrolls must not trigger sync
+    const map = anchorsRef.current;
+
+    const sides: { pane: Pane; own?: number }[] = [
+      { pane: "a", own: entry.deleteIndex },
+      { pane: "b", own: entry.insertIndex },
+    ];
+    const positions: Partial<Record<Pane, number>> = {};
+    for (const { pane, own } of sides) {
+      const container = paneEl(pane);
+      if (container && own !== undefined) {
+        const el = spanIn(pane, own);
+        if (el) positions[pane] = contentY(container, el);
+      }
+    }
+    // Derive the missing side from the known one via the anchor map.
+    if (map) {
+      if (positions.a === undefined && positions.b !== undefined) {
+        positions.a = mapY(map.bTops, map.aTops, positions.b);
+      }
+      if (positions.b === undefined && positions.a !== undefined) {
+        positions.b = mapY(map.aTops, map.bTops, positions.a);
+      }
+    }
+    for (const pane of ["a", "b"] as Pane[]) {
+      const owns = pane === "a" ? entry.deleteIndex !== undefined : entry.insertIndex !== undefined;
+      if (!syncOn && !owns) continue;
+      if (positions[pane] !== undefined) centerOn(pane, positions[pane]!);
+    }
+  }
+
+  function scrollBothToTop() {
+    activePane.current = null;
+    scrollPaneTo("a", 0);
+    scrollPaneTo("b", 0);
+  }
+
+  function alignPanes() {
+    const map = anchorsRef.current;
+    const source = activePane.current ?? "a";
+    const other: Pane = source === "a" ? "b" : "a";
+    const src = paneEl(source);
+    if (!map || !src) return;
+    activePane.current = null;
+    const y = src.scrollTop + PROBE;
+    const mapped =
+      source === "a" ? mapY(map.aTops, map.bTops, y) : mapY(map.bTops, map.aTops, y);
+    scrollPaneTo(other, mapped - PROBE);
+  }
+
+  function handleContextMenu(pane: Pane, e: React.MouseEvent) {
+    const target = (e.target as HTMLElement).closest?.("[data-chunk]") as HTMLElement | null;
+    if (!target?.dataset.chunk) return; // fall back to the native menu
+    e.preventDefault();
+    setCtxMenu({
+      x: e.clientX,
+      y: e.clientY,
+      pane,
+      index: Number(target.dataset.chunk.split("-")[1]),
+    });
+  }
+
+  function locateInOther(menu: ContextMenuState) {
+    setCtxMenu(null);
+    const other: Pane = menu.pane === "a" ? "b" : "a";
+    const container = paneEl(other);
+    if (!container) return;
+    activePane.current = null;
+
+    // Prefer the exact chunk if it exists in the other pane; otherwise the
+    // nearest chunk that does.
+    let targetIndex: number | null = null;
+    for (let distance = 0; distance < 80 && targetIndex === null; distance++) {
+      for (const k of distance === 0 ? [menu.index] : [menu.index - distance, menu.index + distance]) {
+        if (k < 0) continue;
+        if (spanIn(other, k)) {
+          targetIndex = k;
+          break;
+        }
+      }
+    }
+
+    let y: number | null = null;
+    if (targetIndex !== null) {
+      const el = spanIn(other, targetIndex);
+      if (el) y = contentY(container, el);
+    } else if (anchorsRef.current) {
+      y = nearestAnchorPosition(anchorsRef.current, other, menu.index);
+    }
+    if (y === null) return;
+    centerOn(other, y);
+
+    if (targetIndex !== null) {
+      setFlash({ pane: other, index: targetIndex });
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setFlash(null), 1800);
+    }
+  }
+
   function toggleIn<T>(set: Set<T>, value: T, update: (next: Set<T>) => void) {
     const next = new Set(set);
     if (next.has(value)) next.delete(value);
@@ -150,83 +339,15 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     update(next);
   }
 
-  function paneEl(pane: "a" | "b") {
-    return pane === "a" ? paneARef.current : paneBRef.current;
-  }
-
-  function findNearestSpan(
-    container: HTMLElement,
-    pane: "a" | "b",
-    index: number,
-  ): HTMLElement | null {
-    for (let distance = 0; distance < 50; distance++) {
-      const candidates = distance === 0 ? [index] : [index - distance, index + distance];
-      for (const k of candidates) {
-        if (k < 0) continue;
-        const el = container.querySelector<HTMLElement>(`[data-chunk="${pane}-${k}"]`);
-        if (el) return el;
-      }
-    }
-    return null;
-  }
-
-  function jumpTo(entry: RegisterEntry) {
-    setSelected(entry);
-    syncLockUntil.current = Date.now() + 800; // let smooth scrolls settle
-    const sides: { pane: "a" | "b"; own: number | undefined; other: number | undefined }[] = [
-      { pane: "a", own: entry.deleteIndex, other: entry.insertIndex },
-      { pane: "b", own: entry.insertIndex, other: entry.deleteIndex },
-    ];
-    for (const { pane, own, other } of sides) {
-      const container = paneEl(pane);
-      if (!container) continue;
-      let el: HTMLElement | null =
-        own !== undefined
-          ? container.querySelector(`[data-chunk="${pane}-${own}"]`)
-          : null;
-      if (!el) {
-        // This pane doesn't contain the change — only follow when syncing.
-        if (!syncOn) continue;
-        const anchor = own ?? other;
-        if (anchor === undefined) continue;
-        el = findNearestSpan(container, pane, anchor);
-      }
-      el?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }
-
-  function handlePaneScroll(source: "a" | "b") {
-    if (!syncOn || mode !== "side_by_side") return;
-    if (Date.now() < syncLockUntil.current) return;
-    const src = paneEl(source);
-    const dst = paneEl(source === "a" ? "b" : "a");
-    if (!src || !dst) return;
-    requestAnimationFrame(() => {
-      if (Date.now() < syncLockUntil.current) return;
-      const srcRect = src.getBoundingClientRect();
-      const probeY = srcRect.top + Math.min(150, srcRect.height / 3);
-      let anchor: HTMLElement | null = null;
-      for (const el of src.querySelectorAll<HTMLElement>("[data-chunk]")) {
-        if (el.getBoundingClientRect().bottom >= probeY) {
-          anchor = el;
-          break;
-        }
-      }
-      if (!anchor?.dataset.chunk) return;
-      const index = Number(anchor.dataset.chunk.split("-")[1]);
-      const target = findNearestSpan(dst, source === "a" ? "b" : "a", index);
-      if (!target) return;
-      const delta = target.getBoundingClientRect().top - anchor.getBoundingClientRect().top;
-      if (Math.abs(delta) < 2) return;
-      syncLockUntil.current = Date.now() + 120;
-      dst.scrollTop += delta;
-    });
-  }
-
   const selectedIndices = {
     a: selected?.deleteIndex ?? null,
     b: selected?.insertIndex ?? null,
   };
+
+  const otherDocName = (pane: Pane) =>
+    pane === "a"
+      ? comparison.doc_b_name ?? "Document B"
+      : comparison.doc_a_name ?? "Document A";
 
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900 font-sans">
@@ -266,6 +387,22 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={scrollBothToTop}
+              title="Scroll both documents back to the top"
+              className="px-2.5 py-1 text-xs font-medium rounded-md border bg-white text-stone-600 border-stone-200 hover:bg-stone-50 flex items-center gap-1.5"
+            >
+              <ArrowUpToLine className="w-3 h-3" />
+              Top
+            </button>
+            <button
+              onClick={alignPanes}
+              title="Align the other document to your current reading position"
+              className="px-2.5 py-1 text-xs font-medium rounded-md border bg-white text-stone-600 border-stone-200 hover:bg-stone-50 flex items-center gap-1.5"
+            >
+              <Crosshair className="w-3 h-3" />
+              Align
+            </button>
             <button
               onClick={() => setSyncOn((v) => !v)}
               title="When on, both documents scroll together and clicking a change aligns both panes."
@@ -317,9 +454,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                   count={categoryCounts[chip.id]}
                   active={activeCategories.has(chip.id)}
                   activeClass={chip.activeClass}
-                  onClick={() =>
-                    toggleIn(activeCategories, chip.id, setActiveCategories)
-                  }
+                  onClick={() => toggleIn(activeCategories, chip.id, setActiveCategories)}
                 />
               ))}
             </div>
@@ -395,8 +530,13 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 doc={parsed.doc_a}
                 chunks={parsed.chunks}
                 selectedIndex={selectedIndices.a}
+                flashIndex={flash?.pane === "a" ? flash.index : null}
                 scrollRef={paneARef}
                 onScroll={() => handlePaneScroll("a")}
+                onActivate={() => {
+                  activePane.current = "a";
+                }}
+                onContextMenu={(e) => handleContextMenu("a", e)}
               />
               <div className="w-px bg-stone-200" />
               <DocPane
@@ -405,8 +545,13 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 doc={parsed.doc_b}
                 chunks={parsed.chunks}
                 selectedIndex={selectedIndices.b}
+                flashIndex={flash?.pane === "b" ? flash.index : null}
                 scrollRef={paneBRef}
                 onScroll={() => handlePaneScroll("b")}
+                onActivate={() => {
+                  activePane.current = "b";
+                }}
+                onContextMenu={(e) => handleContextMenu("b", e)}
               />
             </div>
           ) : (
@@ -431,6 +576,34 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           )}
         </main>
       </div>
+
+      {ctxMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setCtxMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setCtxMenu(null);
+            }}
+          />
+          <div
+            className="fixed z-50 bg-white border border-stone-200 rounded-md shadow-lg py-1 text-sm"
+            style={{
+              left: Math.min(ctxMenu.x, window.innerWidth - 260),
+              top: Math.min(ctxMenu.y, window.innerHeight - 60),
+            }}
+          >
+            <button
+              onClick={() => locateInOther(ctxMenu)}
+              className="w-full text-left px-3 py-1.5 hover:bg-stone-50 flex items-center gap-2 text-stone-800"
+            >
+              <Crosshair className="w-3.5 h-3.5 text-stone-500" />
+              Locate in {otherDocName(ctxMenu.pane)}
+            </button>
+          </div>
+        </>
+      )}
 
       <footer className="border-t border-stone-200 bg-white px-6 py-2 flex items-center justify-between text-xs text-stone-500 font-mono">
         <div className="flex items-center gap-4">
@@ -498,13 +671,18 @@ const PARAGRAPH_CLASS: Record<string, string> = {
   quote: "text-stone-700 italic border-l-2 border-stone-300 pl-3 mb-3",
 };
 
-function segmentClass(op: DiffChunk["op"], isSelected: boolean): string {
+function segmentClass(
+  op: DiffChunk["op"],
+  isSelected: boolean,
+  isFlashing: boolean,
+): string {
   const base =
     op === "equal"
       ? ""
       : op === "delete"
         ? "bg-red-100 text-red-900 rounded line-through decoration-red-500"
         : "bg-green-100 text-green-900 rounded";
+  if (isFlashing) return `${base} ring-2 ring-amber-500 bg-amber-100 animate-pulse`;
   return isSelected && op !== "equal" ? `${base} ring-2 ring-stone-900` : base;
 }
 
@@ -514,16 +692,22 @@ function DocPane({
   doc,
   chunks,
   selectedIndex,
+  flashIndex,
   scrollRef,
   onScroll,
+  onActivate,
+  onContextMenu,
 }: {
-  pane: "a" | "b";
+  pane: Pane;
   label: string;
   doc: ComparisonData["parsed"]["doc_a"];
   chunks: DiffChunk[];
   selectedIndex: number | null;
+  flashIndex: number | null;
   scrollRef: React.RefObject<HTMLDivElement>;
   onScroll: () => void;
+  onActivate: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const meta = doc.metadata;
   const paragraphs = doc.paragraphs;
@@ -538,7 +722,15 @@ function DocPane({
           {meta?.wordCount ? `${meta.wordCount.toLocaleString()} words` : ""}
         </div>
       </div>
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-8 py-6">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        onPointerDown={onActivate}
+        onWheel={onActivate}
+        onTouchStart={onActivate}
+        onContextMenu={onContextMenu}
+        className="flex-1 overflow-y-auto px-8 py-6"
+      >
         <div className="max-w-2xl mx-auto font-serif">
           {paragraphs && paragraphs.length > 0 ? (
             paragraphs.map((p, pi) => {
@@ -551,7 +743,11 @@ function DocPane({
                     <span
                       key={si}
                       data-chunk={`${pane}-${s.chunkIndex}`}
-                      className={segmentClass(s.op, selectedIndex === s.chunkIndex)}
+                      className={segmentClass(
+                        s.op,
+                        selectedIndex === s.chunkIndex,
+                        flashIndex === s.chunkIndex,
+                      )}
                     >
                       {s.text}
                     </span>
@@ -569,7 +765,11 @@ function DocPane({
                   <span
                     key={index}
                     data-chunk={`${pane}-${index}`}
-                    className={segmentClass(chunk.op, selectedIndex === index)}
+                    className={segmentClass(
+                      chunk.op,
+                      selectedIndex === index,
+                      flashIndex === index,
+                    )}
                   >
                     {chunk.text}
                   </span>
