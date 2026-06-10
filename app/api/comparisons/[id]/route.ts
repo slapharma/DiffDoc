@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { getServiceClient, DOCUMENTS_BUCKET } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
+// This endpoint is polled for live status — it must never serve a cached
+// response.
+export const dynamic = "force-dynamic";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

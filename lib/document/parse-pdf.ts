@@ -14,7 +14,10 @@ export async function parsePdf(
   const notes: string[] = [];
   const pageTexts: string[] = [];
 
-  const result = await pdfParse(buffer, {
+  // pdf.js v1 mis-parses Node Buffer views when @supabase/supabase-js is
+  // loaded in the same process ("bad XRef entry" on valid files); a plain
+  // Uint8Array copy is handled correctly. Do not pass `buffer` directly.
+  const result = await pdfParse(new Uint8Array(buffer) as Buffer, {
     pagerender: (pageData) =>
       pageData
         .getTextContent({

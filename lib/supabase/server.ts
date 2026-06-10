@@ -19,6 +19,12 @@ export function getServiceClient(): SupabaseClient {
 
   cached = createClient(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    // Next.js caches fetch() GETs inside route handlers by default, which
+    // makes supabase-js replay stale DB reads and storage downloads (the UI
+    // then polls a frozen "processing" status forever). Always bypass it.
+    global: {
+      fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
+    },
   });
   return cached;
 }
