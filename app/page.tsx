@@ -192,9 +192,14 @@ function RecentComparisons() {
 
   return (
     <div className="mt-14">
-      <h2 className="text-[11px] font-mono uppercase tracking-[0.18em] text-ink-faint mb-3 flex items-center gap-2">
-        <Clock className="w-3.5 h-3.5" /> Recent comparisons
-      </h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-[11px] font-mono uppercase tracking-[0.18em] text-ink-faint flex items-center gap-2">
+          <Clock className="w-3.5 h-3.5" /> Recent comparisons
+        </h2>
+        <a href="/tasks" className="text-[11px] font-mono uppercase tracking-[0.12em] text-leaf-deep hover:text-leaf cursor-pointer">
+          My Tasks →
+        </a>
+      </div>
       <div className="border-t border-line">
         {items.map((item) => (
           <a

@@ -9,12 +9,13 @@ import {
   ChevronDown,
   ChevronUp,
   Crosshair,
+  Download,
   GitCompare,
   Hash,
-  Layers,
+  LayoutGrid,
   Pencil,
+  Save,
   Search,
-  Sparkles,
   X,
 } from "lucide-react";
 import { projectRange } from "@/lib/diff/project";
@@ -76,11 +77,10 @@ export type ComparisonData = {
   };
 };
 
-type ModeId = "side_by_side" | "aligned_sections" | "summary_first";
+type ModeId = "side_by_side" | "summary_first";
 
 const MODE_META: Record<ModeId, { label: string; icon: typeof GitCompare }> = {
   side_by_side: { label: "Side-by-side", icon: GitCompare },
-  aligned_sections: { label: "Aligned sections", icon: Layers },
   summary_first: { label: "Report", icon: BookOpen },
 };
 
@@ -126,6 +126,8 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
   const [syncOn, setSyncOn] = useState(true);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
   const [flash, setFlash] = useState<{ pane: Pane; index: number } | null>(null);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [activeCategories, setActiveCategories] = useState<Set<Category>>(
     () => new Set(["flagged", "added", "removed", "changed"]),
   );
@@ -133,13 +135,13 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     () => new Set(ALL_ACTIONS),
   );
 
-  // Task title (item 7): editable, saved via PATCH.
+  // Task title (editable, persisted via PATCH).
   const defaultTitle = `${comparison.doc_a_name ?? "Primary"} vs ${comparison.doc_b_name ?? "Comparator"}`;
   const [title, setTitle] = useState(comparison.title ?? defaultTitle);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(title);
 
-  // Search (item 3).
+  // Search.
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<SearchScope>("both");
   const [matches, setMatches] = useState<SearchMatch[]>([]);
@@ -152,6 +154,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
   /** The pane the user is physically scrolling — the only sync source. */
   const activePane = useRef<Pane | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const entries = useMemo<RegisterEntry[]>(
     () =>
@@ -183,8 +186,8 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     return counts;
   }, [entries]);
 
-  // Jump-to targets (item 2): pages for PDFs, headings for DOCX. Primary
-  // drives navigation; fall back to the Comparator when Primary has neither.
+  // Jump-to targets: pages for PDFs, headings for DOCX. Primary drives
+  // navigation; fall back to the Comparator when Primary has neither.
   const jump = useMemo<{ side: Pane; targets: JumpTarget[] }>(() => {
     const primary = jumpTargets(parsed.doc_a.paragraphs, parsed.chunks, "a");
     if (primary.length > 0) return { side: "a", targets: primary };
@@ -196,7 +199,10 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
   );
   const shown = visible.slice(0, MAX_REGISTER_ENTRIES);
 
-  const recommended = (comparison.view_mode ?? "side_by_side") as ModeId;
+  // Aligned-sections was removed as a feature; mid-similarity comparisons
+  // recommend side-by-side until the AI layer lands.
+  const recommended: ModeId =
+    comparison.view_mode === "summary_first" ? "summary_first" : "side_by_side";
   const similarity = comparison.similarity_score;
 
   function paneEl(pane: Pane) {
@@ -232,6 +238,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
   useEffect(() => {
     return () => {
       if (flashTimer.current) clearTimeout(flashTimer.current);
+      if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, []);
 
@@ -390,20 +397,44 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     lastSearch.current = null;
   }
 
-  async function saveTitle() {
-    const next = titleDraft.trim();
-    setEditingTitle(false);
-    if (!next || next === title) return;
-    setTitle(next); // optimistic
+  async function persistTitle(next: string): Promise<boolean> {
     try {
       const res = await fetch(`/api/comparisons/${comparison.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: next }),
       });
-      if (!res.ok) throw new Error();
+      return res.ok;
     } catch {
-      setTitle(title); // revert on failure
+      return false;
+    }
+  }
+
+  async function saveTitle() {
+    const next = titleDraft.trim();
+    setEditingTitle(false);
+    if (!next || next === title) return;
+    const previous = title;
+    setTitle(next); // optimistic
+    if (!(await persistTitle(next))) setTitle(previous);
+  }
+
+  async function saveTask() {
+    setSaveState("saving");
+    const ok = await persistTitle(title);
+    setSaveState(ok ? "saved" : "idle");
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => setSaveState("idle"), 2000);
+  }
+
+  function downloadReport() {
+    setDownloadOpen(false);
+    if (mode !== "summary_first") {
+      setMode("summary_first");
+      // let the report render before opening the print dialog
+      setTimeout(() => window.print(), 450);
+    } else {
+      window.print();
     }
   }
 
@@ -463,112 +494,207 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
 
   return (
     <div className="h-screen flex flex-col bg-paper text-ink font-sans">
-      <header className="border-b border-line print-hide">
-        {/* Row 1 — identity: logo, task title, documents */}
-        <div className="px-6 py-2.5 flex items-center justify-between gap-6">
-          <div className="flex items-center gap-5 min-w-0">
-            <span className="flex-shrink-0">
-              <Wordmark size="text-xl" />
-            </span>
-            <div className="w-px h-5 bg-line flex-shrink-0" />
-            {editingTitle ? (
-              <form
-                className="flex items-center gap-1.5 min-w-0"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void saveTitle();
-                }}
-              >
-                <input
-                  autoFocus
-                  value={titleDraft}
-                  onChange={(e) => setTitleDraft(e.target.value)}
-                  onKeyDown={(e) => e.key === "Escape" && setEditingTitle(false)}
-                  maxLength={120}
-                  className="text-base font-display font-bold text-ink bg-white border border-line rounded px-2 py-1 w-80 focus:outline-none focus:ring-1 focus:ring-leaf"
-                />
-                <button type="submit" className="p-1 text-leaf-deep hover:bg-leaf-wash rounded" aria-label="Save title">
-                  <Check className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingTitle(false)}
-                  className="p-1 text-ink-faint hover:bg-paper-deep rounded"
-                  aria-label="Cancel"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </form>
-            ) : (
-              <button
-                onClick={() => {
-                  setTitleDraft(title);
-                  setEditingTitle(true);
-                }}
-                title="Rename this comparison"
-                className="group flex items-center gap-2 min-w-0 text-base font-display font-bold text-ink hover:text-ink-soft"
-              >
-                <span className="truncate">{title}</span>
-                <Pencil className="w-3 h-3 text-ink-faint group-hover:text-leaf-deep flex-shrink-0" />
+      <header className="border-b border-line px-6 py-2.5 flex items-center justify-between gap-6 print-hide">
+        <div className="flex items-center gap-5 min-w-0">
+          <span className="flex-shrink-0">
+            <Wordmark size="text-xl" />
+          </span>
+          <div className="w-px h-5 bg-line flex-shrink-0" />
+          {editingTitle ? (
+            <form
+              className="flex items-center gap-1.5 min-w-0"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void saveTitle();
+              }}
+            >
+              <input
+                autoFocus
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => e.key === "Escape" && setEditingTitle(false)}
+                maxLength={120}
+                className="text-base font-display font-bold text-ink bg-white border border-line rounded px-2 py-1 w-80 focus:outline-none focus:ring-1 focus:ring-leaf"
+              />
+              <button type="submit" className="p-1 text-leaf-deep hover:bg-leaf-wash rounded cursor-pointer" aria-label="Save title">
+                <Check className="w-4 h-4" />
               </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2 text-xs flex-shrink-0">
-            <DocBadge role="Primary" name={comparison.doc_a_name} />
-            <ArrowLeftRight className="w-3 h-3 text-ink-faint" />
-            <DocBadge role="Comparator" name={comparison.doc_b_name} />
-          </div>
+              <button
+                type="button"
+                onClick={() => setEditingTitle(false)}
+                className="p-1 text-ink-faint hover:bg-paper-deep rounded cursor-pointer"
+                aria-label="Cancel"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </form>
+          ) : (
+            <button
+              onClick={() => {
+                setTitleDraft(title);
+                setEditingTitle(true);
+              }}
+              title="Rename this comparison"
+              className="group flex items-center gap-2 min-w-0 text-base font-display font-bold text-ink hover:text-ink-soft cursor-pointer"
+            >
+              <span className="truncate">{title}</span>
+              <Pencil className="w-3 h-3 text-ink-faint group-hover:text-leaf-deep flex-shrink-0" />
+            </button>
+          )}
         </div>
 
-        {/* Row 2 — toolbar: search, jump, navigation, views */}
-        <div className="px-6 py-2 border-t border-line flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 flex-shrink-0 relative">
+          <button
+            onClick={() => void saveTask()}
+            disabled={saveState === "saving"}
+            className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-full border border-ink/60 text-ink bg-white hover:bg-paper-deep transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {saveState === "saved" ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-leaf-deep" /> Saved
+              </>
+            ) : (
+              <>
+                <Save className="w-3.5 h-3.5" /> Save
+              </>
+            )}
+          </button>
+          <div className="relative">
+            <button
+              onClick={() => setDownloadOpen((v) => !v)}
+              className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-full bg-leaf text-white hover:bg-leaf-deep transition-colors cursor-pointer flex items-center gap-1.5"
+              aria-haspopup="menu"
+              aria-expanded={downloadOpen}
+            >
+              <Download className="w-3.5 h-3.5" /> Download
+              <ChevronDown className="w-3 h-3" />
+            </button>
+            {downloadOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setDownloadOpen(false)} />
+                <div className="absolute right-0 top-full mt-1.5 z-50 bg-white border border-line rounded-lg shadow-lg py-1 w-56" role="menu">
+                  <a
+                    href={`/api/comparisons/${comparison.id}/download?doc=a`}
+                    onClick={() => setDownloadOpen(false)}
+                    className="block px-3 py-2 text-sm text-ink hover:bg-leaf-wash cursor-pointer"
+                    role="menuitem"
+                  >
+                    <span className="text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-leaf-deep block">Primary</span>
+                    <span className="truncate block">{comparison.doc_a_name ?? "Document A"}</span>
+                  </a>
+                  <a
+                    href={`/api/comparisons/${comparison.id}/download?doc=b`}
+                    onClick={() => setDownloadOpen(false)}
+                    className="block px-3 py-2 text-sm text-ink hover:bg-leaf-wash cursor-pointer"
+                    role="menuitem"
+                  >
+                    <span className="text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-leaf-deep block">Comparator</span>
+                    <span className="truncate block">{comparison.doc_b_name ?? "Document B"}</span>
+                  </a>
+                  <button
+                    onClick={downloadReport}
+                    className="w-full text-left px-3 py-2 text-sm text-ink hover:bg-leaf-wash cursor-pointer"
+                    role="menuitem"
+                  >
+                    <span className="text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-leaf-deep block">Report</span>
+                    <span className="block">Audit report (PDF)</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+          <a
+            href="/tasks"
+            className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-full text-ink-soft hover:text-ink hover:bg-paper-deep transition-colors cursor-pointer flex items-center gap-1.5"
+          >
+            <LayoutGrid className="w-3.5 h-3.5" /> My Tasks
+          </a>
+        </div>
+      </header>
+
+      <div className="flex-1 min-h-0 flex print-expand">
+        <aside className="w-72 border-r border-line bg-white flex flex-col print-hide">
+          {/* View switcher */}
+          <div className="p-3 border-b border-line">
+            <div className="flex items-center gap-1 bg-paper rounded-full p-0.5 border border-line">
+              {(Object.keys(MODE_META) as ModeId[]).map((id) => {
+                const Icon = MODE_META[id].icon;
+                const active = mode === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setMode(id)}
+                    className={`flex-1 px-2.5 py-1.5 text-xs font-medium rounded-full flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                      active ? "bg-ink text-paper" : "text-ink-soft hover:text-ink"
+                    }`}
+                  >
+                    <Icon className="w-3 h-3" />
+                    {MODE_META[id].label}
+                  </button>
+                );
+              })}
+            </div>
+            {similarity != null && (
+              <p className="mt-2 text-center text-[11px] text-ink-soft font-serif italic">
+                <span className="font-mono not-italic font-bold text-leaf-deep">{similarity}%</span>{" "}
+                similar · recommends {MODE_META[recommended].label}
+              </p>
+            )}
+          </div>
+
+          {/* Tools */}
+          <div className="p-3 border-b border-line space-y-2">
+            <div className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-ink-faint">
+              Tools
+            </div>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 runSearch();
               }}
-              className="flex items-center bg-white border border-line rounded-full overflow-hidden"
+              className="flex items-center bg-paper border border-line rounded-full overflow-hidden focus-within:ring-1 focus-within:ring-leaf"
             >
               <Search className="w-3.5 h-3.5 text-ink-faint ml-3 flex-shrink-0" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search text…"
-                className="px-2 py-1.5 text-xs w-44 focus:outline-none bg-transparent"
+                aria-label="Search text"
+                className="px-2 py-1.5 text-xs w-full focus:outline-none bg-transparent min-w-0"
               />
               {query && (
-                <button type="button" onClick={clearSearch} className="p-1 text-ink-faint hover:text-ink" aria-label="Clear search">
+                <button type="button" onClick={clearSearch} className="p-1 text-ink-faint hover:text-ink cursor-pointer flex-shrink-0" aria-label="Clear search">
                   <X className="w-3 h-3" />
                 </button>
               )}
+            </form>
+            <div className="flex items-center gap-1.5">
               <select
                 value={scope}
                 onChange={(e) => setScope(e.target.value as SearchScope)}
-                className="text-xs text-ink-soft bg-paper-deep border-l border-line px-2 py-1.5 focus:outline-none"
+                className="flex-1 text-xs text-ink-soft bg-paper border border-line rounded-full px-2.5 py-1.5 focus:outline-none cursor-pointer"
                 aria-label="Search scope"
               >
-                <option value="both">Both</option>
-                <option value="a">Primary</option>
-                <option value="b">Comparator</option>
+                <option value="both">Search: Both</option>
+                <option value="a">Search: Primary</option>
+                <option value="b">Search: Comparator</option>
               </select>
-            </form>
-            {matches.length > 0 && (
-              <div className="flex items-center gap-0.5 text-xs text-ink-soft">
-                <span className="font-mono text-leaf-deep font-bold">
-                  {matchIndex + 1}/{matches.length}
-                </span>
-                <button onClick={() => goToMatch(matchIndex - 1)} className="p-1 hover:bg-paper-deep rounded" aria-label="Previous match">
-                  <ChevronUp className="w-3.5 h-3.5" />
-                </button>
-                <button onClick={() => goToMatch(matchIndex + 1)} className="p-1 hover:bg-paper-deep rounded" aria-label="Next match">
-                  <ChevronDown className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-            {lastSearch.current && matches.length === 0 && (
-              <span className="text-xs text-ink-faint font-serif italic">No matches</span>
-            )}
+              {matches.length > 0 ? (
+                <div className="flex items-center gap-0.5 text-xs text-ink-soft flex-shrink-0">
+                  <span className="font-mono text-leaf-deep font-bold">
+                    {matchIndex + 1}/{matches.length}
+                  </span>
+                  <button onClick={() => goToMatch(matchIndex - 1)} className="p-1 hover:bg-paper-deep rounded cursor-pointer" aria-label="Previous match">
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => goToMatch(matchIndex + 1)} className="p-1 hover:bg-paper-deep rounded cursor-pointer" aria-label="Next match">
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : lastSearch.current ? (
+                <span className="text-[11px] text-ink-faint font-serif italic flex-shrink-0">No matches</span>
+              ) : null}
+            </div>
             {jump.targets.length > 0 && (
               <select
                 defaultValue=""
@@ -576,7 +702,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                   handleJumpSelect(e.target.value);
                   e.target.value = "";
                 }}
-                className="text-xs text-ink bg-white border border-line rounded-full px-3 py-1.5 max-w-48 focus:outline-none"
+                className="w-full text-xs text-ink bg-paper border border-line rounded-full px-2.5 py-1.5 focus:outline-none cursor-pointer"
                 aria-label="Jump to"
               >
                 <option value="" disabled>
@@ -589,80 +715,42 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 ))}
               </select>
             )}
-          </div>
-
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-xs text-ink-soft flex items-center gap-1.5 mr-1">
-              {similarity != null && (
-                <>
-                  <span className="font-mono font-bold text-leaf-deep">{similarity}%</span>
-                  <span className="font-serif italic">similar ·</span>
-                </>
-              )}
-              <span className="font-serif italic">
-                recommends{" "}
-                <span className="font-medium not-italic text-ink">
-                  {MODE_META[recommended]?.label ?? recommended}
-                </span>
-              </span>
-            </span>
-            <button
-              onClick={scrollBothToTop}
-              title="Scroll both documents back to the top"
-              className="px-3 py-1 text-xs font-medium rounded-full border bg-white text-ink-soft border-line hover:border-ink/40 flex items-center gap-1.5 transition-colors"
-            >
-              <ArrowUpToLine className="w-3 h-3" />
-              Top
-            </button>
-            <button
-              onClick={alignPanes}
-              title="Align the other document to your current reading position"
-              className="px-3 py-1 text-xs font-medium rounded-full border bg-white text-ink-soft border-line hover:border-ink/40 flex items-center gap-1.5 transition-colors"
-            >
-              <Crosshair className="w-3 h-3" />
-              Align
-            </button>
-            <button
-              onClick={() => setSyncOn((v) => !v)}
-              title="When on, both documents scroll together and clicking a change aligns both panes."
-              className={`px-3 py-1 text-xs font-medium rounded-full border flex items-center gap-1.5 transition-colors ${
-                syncOn
-                  ? "bg-ink text-paper border-ink"
-                  : "bg-white text-ink-soft border-line hover:border-ink/40"
-              }`}
-            >
-              <ArrowLeftRight className={`w-3 h-3 ${syncOn ? "text-leaf-ring" : ""}`} />
-              Move in sync
-            </button>
-            <div className="flex items-center gap-4 ml-2">
-              {(Object.keys(MODE_META) as ModeId[]).map((id) => {
-                const active = mode === id;
-                return (
-                  <button
-                    key={id}
-                    onClick={() => setMode(id)}
-                    className={`relative pb-1 text-xs transition-colors ${
-                      active
-                        ? "font-semibold text-ink"
-                        : "text-ink-faint hover:text-ink-soft"
-                    }`}
-                  >
-                    {MODE_META[id].label}
-                    {active && (
-                      <span className="absolute left-0 right-0 -bottom-0.5 h-[3px] bg-leaf rounded-full" />
-                    )}
-                  </button>
-                );
-              })}
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                onClick={scrollBothToTop}
+                title="Scroll both documents back to the top"
+                className="px-2 py-1.5 text-[11px] font-medium rounded-full border bg-white text-ink-soft border-line hover:border-ink/40 flex items-center justify-center gap-1 transition-colors cursor-pointer"
+              >
+                <ArrowUpToLine className="w-3 h-3" />
+                Top
+              </button>
+              <button
+                onClick={alignPanes}
+                title="Align the other document to your current reading position"
+                className="px-2 py-1.5 text-[11px] font-medium rounded-full border bg-white text-ink-soft border-line hover:border-ink/40 flex items-center justify-center gap-1 transition-colors cursor-pointer"
+              >
+                <Crosshair className="w-3 h-3" />
+                Align
+              </button>
+              <button
+                onClick={() => setSyncOn((v) => !v)}
+                title="Move in sync: both documents scroll together and clicking a change aligns both panes."
+                aria-pressed={syncOn}
+                className={`px-2 py-1.5 text-[11px] font-medium rounded-full border flex items-center justify-center gap-1 transition-colors cursor-pointer ${
+                  syncOn
+                    ? "bg-ink text-paper border-ink"
+                    : "bg-white text-ink-soft border-line hover:border-ink/40"
+                }`}
+              >
+                <ArrowLeftRight className={`w-3 h-3 ${syncOn ? "text-leaf-ring" : ""}`} />
+                Sync
+              </button>
             </div>
           </div>
-        </div>
-      </header>
 
-      <div className="flex-1 min-h-0 flex print-expand">
-        <aside className="w-72 border-r border-line bg-white flex flex-col print-hide">
-          <div className="p-4 border-b border-line">
-            <div className="flex items-baseline justify-between mb-2.5">
+          {/* Register */}
+          <div className="p-3 border-b border-line">
+            <div className="flex items-baseline justify-between mb-2">
               <h3 className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-ink-faint">
                 Proof marks
               </h3>
@@ -670,7 +758,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 {entries.length}
               </span>
             </div>
-            <div className="flex flex-wrap gap-1 mb-3">
+            <div className="flex flex-wrap gap-1 mb-2.5">
               {CATEGORY_CHIP.map((chip) => (
                 <FilterChip
                   key={chip.id}
@@ -681,9 +769,6 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                   onClick={() => toggleIn(activeCategories, chip.id, setActiveCategories)}
                 />
               ))}
-            </div>
-            <div className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-ink-faint mb-1.5">
-              Action
             </div>
             <div className="flex flex-wrap gap-1">
               {ALL_ACTIONS.filter((a) => actionCounts[a] > 0).map((action) => (
@@ -722,7 +807,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                     if (mode !== "side_by_side") setMode("side_by_side");
                     jumpTo(entry);
                   }}
-                  className={`w-full text-left px-3 py-2.5 border-l-2 border-b border-line hover:bg-paper-deep/60 transition-colors ${borderClass} ${
+                  className={`w-full text-left px-3 py-2.5 border-l-2 border-b border-line hover:bg-paper-deep/60 transition-colors cursor-pointer ${borderClass} ${
                     isSelected ? "ring-1 ring-ink bg-paper-deep/60" : ""
                   }`}
                 >
@@ -747,8 +832,8 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
         </aside>
 
         <main className="flex-1 overflow-hidden bg-paper print-expand">
-          {mode === "side_by_side" && (
-            <div className="flex h-full gap-4 p-4">
+          {mode === "side_by_side" ? (
+            <div className="flex h-full gap-4 p-4 pt-3">
               <DocPane
                 pane="a"
                 label={comparison.doc_a_name ?? "Document A"}
@@ -778,8 +863,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 onContextMenu={(e) => handleContextMenu("b", e)}
               />
             </div>
-          )}
-          {mode === "summary_first" && (
+          ) : (
             <ReportView
               title={title}
               createdAt={comparison.created_at}
@@ -798,26 +882,6 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               }}
               entries={entries}
             />
-          )}
-          {mode === "aligned_sections" && (
-            <div className="h-full flex items-center justify-center">
-              <div className="max-w-md text-center px-6">
-                <Sparkles className="w-8 h-8 text-leaf mx-auto mb-3" />
-                <h2 className="font-display font-bold text-lg text-ink mb-2">
-                  Aligned sections arrives with the AI layer
-                </h2>
-                <p className="text-sm font-serif text-ink-soft mb-5">
-                  Semantic section alignment is part of the next build phase. Side-by-side
-                  shows every literal change today.
-                </p>
-                <button
-                  onClick={() => setMode("side_by_side")}
-                  className="px-5 py-2 text-sm font-medium bg-ink text-paper rounded-full hover:bg-ink/85"
-                >
-                  Back to side-by-side
-                </button>
-              </div>
-            </div>
           )}
         </main>
       </div>
@@ -841,7 +905,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           >
             <button
               onClick={() => locateInOther(ctxMenu)}
-              className="w-full text-left px-3 py-1.5 hover:bg-leaf-wash flex items-center gap-2 text-ink"
+              className="w-full text-left px-3 py-1.5 hover:bg-leaf-wash flex items-center gap-2 text-ink cursor-pointer"
             >
               <Crosshair className="w-3.5 h-3.5 text-leaf-deep" />
               Locate in {ROLE_LABEL[ctxMenu.pane === "a" ? "b" : "a"]}
@@ -860,18 +924,6 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
         </div>
         <BuildStamp />
       </footer>
-    </div>
-  );
-}
-
-/** Stamp-style document badge: outlined, slightly rotated, like an inked stamp. */
-function DocBadge({ role, name }: { role: string; name: string | null }) {
-  return (
-    <div className="flex flex-col px-3 py-1.5 border-[1.5px] border-ink/70 rounded min-w-0 max-w-56 -rotate-1 bg-white/60">
-      <span className="text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-leaf-deep flex-shrink-0">
-        {role}
-      </span>
-      <span className="font-medium text-ink truncate text-xs">{name ?? "—"}</span>
     </div>
   );
 }
@@ -928,7 +980,7 @@ function FilterChip({
   return (
     <button
       onClick={onClick}
-      className={`px-2 py-0.5 text-xs rounded-full border flex items-center gap-1 ${
+      className={`px-2 py-0.5 text-xs rounded-full border flex items-center gap-1 cursor-pointer transition-colors ${
         active ? activeClass : "bg-white border-line text-ink-faint"
       }`}
     >
@@ -995,78 +1047,81 @@ function DocPane({
   const hidden = pane === "a" ? "insert" : "delete";
 
   return (
-    <div className="flex-1 flex flex-col bg-white min-w-0 rounded-xl border border-line overflow-hidden">
-      <div className="px-6 py-2.5 border-b border-line flex items-center gap-2.5">
-        <span
-          className={`text-[9px] font-mono font-bold uppercase tracking-[0.2em] px-2 py-1 rounded ${
-            pane === "a" ? "bg-ink text-paper" : "bg-leaf-wash text-leaf-deep"
+    <div className="flex-1 flex flex-col min-w-0">
+      {/* Stamp badge above the document — outlined, inked slightly off-true */}
+      <div className="flex items-end justify-between px-1 pb-2">
+        <div
+          className={`flex flex-col px-3 py-1.5 border-[1.5px] border-ink/70 rounded bg-white/70 min-w-0 max-w-[75%] ${
+            pane === "a" ? "-rotate-1" : "rotate-1"
           }`}
         >
-          {ROLE_LABEL[pane]}
-        </span>
-        <div className="min-w-0">
-          <div className="text-sm font-medium text-ink truncate">{label}</div>
-          <div className="text-[11px] text-ink-faint font-mono">
-            {meta?.pageCount ? `${meta.pageCount} pages · ` : ""}
-            {meta?.wordCount ? `${meta.wordCount.toLocaleString()} words` : ""}
-          </div>
+          <span className="text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-leaf-deep">
+            {ROLE_LABEL[pane]}
+          </span>
+          <span className="font-medium text-ink truncate text-xs">{label}</span>
         </div>
+        <span className="text-[11px] text-ink-faint font-mono pb-0.5 flex-shrink-0">
+          {meta?.pageCount ? `${meta.pageCount} pp · ` : ""}
+          {meta?.wordCount ? `${meta.wordCount.toLocaleString()} words` : ""}
+        </span>
       </div>
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        onPointerDown={onActivate}
-        onWheel={onActivate}
-        onTouchStart={onActivate}
-        onContextMenu={onContextMenu}
-        className="flex-1 overflow-y-auto px-8 py-6"
-      >
-        <div className="max-w-2xl mx-auto font-serif">
-          {paragraphs && paragraphs.length > 0 ? (
-            paragraphs.map((p, pi) => {
-              const segments = projectRange(chunks, pane, p.offset, p.offset + p.length);
-              if (segments.every((s) => s.text.trim().length === 0)) return null;
-              return (
-                <p key={pi} className={PARAGRAPH_CLASS[p.style] ?? PARAGRAPH_CLASS.body}>
-                  {p.style === "list" && <span className="select-none">•&nbsp;</span>}
-                  {segments.map((s, si) => (
+      <div className="flex-1 flex flex-col bg-white min-h-0 rounded-xl border border-line overflow-hidden">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          onPointerDown={onActivate}
+          onWheel={onActivate}
+          onTouchStart={onActivate}
+          onContextMenu={onContextMenu}
+          className="flex-1 overflow-y-auto px-8 py-6"
+        >
+          <div className="max-w-2xl mx-auto font-serif">
+            {paragraphs && paragraphs.length > 0 ? (
+              paragraphs.map((p, pi) => {
+                const segments = projectRange(chunks, pane, p.offset, p.offset + p.length);
+                if (segments.every((s) => s.text.trim().length === 0)) return null;
+                return (
+                  <p key={pi} className={PARAGRAPH_CLASS[p.style] ?? PARAGRAPH_CLASS.body}>
+                    {p.style === "list" && <span className="select-none">•&nbsp;</span>}
+                    {segments.map((s, si) => (
+                      <span
+                        key={si}
+                        data-chunk={`${pane}-${s.chunkIndex}`}
+                        className={segmentClass(
+                          s.op,
+                          selectedIndex === s.chunkIndex,
+                          flashIndex === s.chunkIndex,
+                        )}
+                      >
+                        {s.text}
+                      </span>
+                    ))}
+                  </p>
+                );
+              })
+            ) : (
+              // Fallback for comparisons processed before paragraph skeletons
+              // were stored: continuous chunk stream.
+              <div className="text-ink leading-relaxed whitespace-pre-wrap break-words">
+                {chunks.map((chunk, index) => {
+                  if (chunk.op === hidden) return null;
+                  return (
                     <span
-                      key={si}
-                      data-chunk={`${pane}-${s.chunkIndex}`}
+                      key={index}
+                      data-chunk={`${pane}-${index}`}
                       className={segmentClass(
-                        s.op,
-                        selectedIndex === s.chunkIndex,
-                        flashIndex === s.chunkIndex,
+                        chunk.op,
+                        selectedIndex === index,
+                        flashIndex === index,
                       )}
                     >
-                      {s.text}
+                      {chunk.text}
                     </span>
-                  ))}
-                </p>
-              );
-            })
-          ) : (
-            // Fallback for comparisons processed before paragraph skeletons
-            // were stored: continuous chunk stream.
-            <div className="text-ink leading-relaxed whitespace-pre-wrap break-words">
-              {chunks.map((chunk, index) => {
-                if (chunk.op === hidden) return null;
-                return (
-                  <span
-                    key={index}
-                    data-chunk={`${pane}-${index}`}
-                    className={segmentClass(
-                      chunk.op,
-                      selectedIndex === index,
-                      flashIndex === index,
-                    )}
-                  >
-                    {chunk.text}
-                  </span>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
