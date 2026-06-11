@@ -50,7 +50,7 @@ export default function TasksPage() {
         <Wordmark />
         <a
           href="/"
-          className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-full bg-leaf text-white hover:bg-leaf-deep transition-colors cursor-pointer flex items-center gap-1.5"
+          className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-lg bg-leaf text-white hover:bg-leaf-deep transition-colors cursor-pointer flex items-center gap-1.5"
         >
           <Plus className="w-3.5 h-3.5" /> New comparison
         </a>
@@ -94,7 +94,7 @@ export default function TasksPage() {
                   <p className="font-serif text-ink-soft mb-4">No comparisons yet.</p>
                   <a
                     href="/"
-                    className="inline-block px-5 py-2 text-sm font-medium bg-leaf text-white rounded-full hover:bg-leaf-deep cursor-pointer"
+                    className="inline-block px-5 py-2 text-sm font-medium bg-leaf text-white rounded-lg hover:bg-leaf-deep cursor-pointer"
                   >
                     Run your first comparison
                   </a>

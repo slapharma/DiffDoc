@@ -58,7 +58,7 @@ export function ReportView({
           </div>
           <button
             onClick={() => window.print()}
-            className="print-hide px-4 py-2 bg-leaf text-white rounded-full text-sm font-medium flex items-center gap-2 hover:bg-leaf-deep"
+            className="print-hide px-4 py-2 bg-leaf text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-leaf-deep"
           >
             <Download className="w-4 h-4" /> Download PDF
           </button>

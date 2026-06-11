@@ -121,7 +121,7 @@ export default function Home() {
             <button
               onClick={compare}
               disabled={!canCompare}
-              className="px-7 py-3 bg-leaf text-white rounded-full font-medium text-sm flex items-center gap-2 hover:bg-leaf-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
+              className="px-7 py-3 bg-leaf text-white rounded-lg font-medium text-sm flex items-center gap-2 hover:bg-leaf-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
             >
               {busy ? (
                 <>

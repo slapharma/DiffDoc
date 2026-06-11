@@ -547,7 +547,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           <button
             onClick={() => void saveTask()}
             disabled={saveState === "saving"}
-            className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-full border border-ink/60 text-ink bg-white hover:bg-paper-deep transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+            className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-lg border border-ink/60 text-ink bg-white hover:bg-paper-deep transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
           >
             {saveState === "saved" ? (
               <>
@@ -562,7 +562,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           <div className="relative">
             <button
               onClick={() => setDownloadOpen((v) => !v)}
-              className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-full bg-leaf text-white hover:bg-leaf-deep transition-colors cursor-pointer flex items-center gap-1.5"
+              className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-lg bg-leaf text-white hover:bg-leaf-deep transition-colors cursor-pointer flex items-center gap-1.5"
               aria-haspopup="menu"
               aria-expanded={downloadOpen}
             >
@@ -605,7 +605,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           </div>
           <a
             href="/tasks"
-            className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-full text-ink-soft hover:text-ink hover:bg-paper-deep transition-colors cursor-pointer flex items-center gap-1.5"
+            className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-lg text-ink-soft hover:text-ink hover:bg-paper-deep transition-colors cursor-pointer flex items-center gap-1.5"
           >
             <LayoutGrid className="w-3.5 h-3.5" /> My Tasks
           </a>
@@ -616,7 +616,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
         <aside className="w-72 border-r border-line bg-white flex flex-col print-hide">
           {/* View switcher */}
           <div className="p-3 border-b border-line">
-            <div className="flex items-center gap-1 bg-paper rounded-full p-0.5 border border-line">
+            <div className="flex items-center gap-1 bg-paper rounded-lg p-0.5 border border-line">
               {(Object.keys(MODE_META) as ModeId[]).map((id) => {
                 const Icon = MODE_META[id].icon;
                 const active = mode === id;
@@ -624,7 +624,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                   <button
                     key={id}
                     onClick={() => setMode(id)}
-                    className={`flex-1 px-2.5 py-1.5 text-xs font-medium rounded-full flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                    className={`flex-1 px-2.5 py-1.5 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                       active ? "bg-ink text-paper" : "text-ink-soft hover:text-ink"
                     }`}
                   >
@@ -652,7 +652,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 e.preventDefault();
                 runSearch();
               }}
-              className="flex items-center bg-paper border border-line rounded-full overflow-hidden focus-within:ring-1 focus-within:ring-leaf"
+              className="flex items-center bg-paper border border-line rounded-lg overflow-hidden focus-within:ring-1 focus-within:ring-leaf"
             >
               <Search className="w-3.5 h-3.5 text-ink-faint ml-3 flex-shrink-0" />
               <input
@@ -672,7 +672,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               <select
                 value={scope}
                 onChange={(e) => setScope(e.target.value as SearchScope)}
-                className="flex-1 text-xs text-ink-soft bg-paper border border-line rounded-full px-2.5 py-1.5 focus:outline-none cursor-pointer"
+                className="flex-1 text-xs text-ink-soft bg-paper border border-line rounded-lg px-2.5 py-1.5 focus:outline-none cursor-pointer"
                 aria-label="Search scope"
               >
                 <option value="both">Search: Both</option>
@@ -702,7 +702,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                   handleJumpSelect(e.target.value);
                   e.target.value = "";
                 }}
-                className="w-full text-xs text-ink bg-paper border border-line rounded-full px-2.5 py-1.5 focus:outline-none cursor-pointer"
+                className="w-full text-xs text-ink bg-paper border border-line rounded-lg px-2.5 py-1.5 focus:outline-none cursor-pointer"
                 aria-label="Jump to"
               >
                 <option value="" disabled>
@@ -719,7 +719,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               <button
                 onClick={scrollBothToTop}
                 title="Scroll both documents back to the top"
-                className="px-2 py-1.5 text-[11px] font-medium rounded-full border bg-white text-ink-soft border-line hover:border-ink/40 flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                className="px-2 py-1.5 text-[11px] font-medium rounded-lg border bg-white text-ink-soft border-line hover:border-ink/40 flex items-center justify-center gap-1 transition-colors cursor-pointer"
               >
                 <ArrowUpToLine className="w-3 h-3" />
                 Top
@@ -727,7 +727,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               <button
                 onClick={alignPanes}
                 title="Align the other document to your current reading position"
-                className="px-2 py-1.5 text-[11px] font-medium rounded-full border bg-white text-ink-soft border-line hover:border-ink/40 flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                className="px-2 py-1.5 text-[11px] font-medium rounded-lg border bg-white text-ink-soft border-line hover:border-ink/40 flex items-center justify-center gap-1 transition-colors cursor-pointer"
               >
                 <Crosshair className="w-3 h-3" />
                 Align
@@ -736,7 +736,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 onClick={() => setSyncOn((v) => !v)}
                 title="Move in sync: both documents scroll together and clicking a change aligns both panes."
                 aria-pressed={syncOn}
-                className={`px-2 py-1.5 text-[11px] font-medium rounded-full border flex items-center justify-center gap-1 transition-colors cursor-pointer ${
+                className={`px-2 py-1.5 text-[11px] font-medium rounded-lg border flex items-center justify-center gap-1 transition-colors cursor-pointer ${
                   syncOn
                     ? "bg-ink text-paper border-ink"
                     : "bg-white text-ink-soft border-line hover:border-ink/40"
@@ -750,13 +750,34 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
 
           {/* Register */}
           <div className="p-3 border-b border-line">
-            <div className="flex items-baseline justify-between mb-2">
+            <div className="flex items-baseline justify-between mb-1.5">
               <h3 className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-ink-faint">
                 Proof marks
               </h3>
               <span className="font-mono text-lg font-bold text-leaf-deep leading-none">
                 {entries.length}
               </span>
+            </div>
+            <div className="flex items-center gap-2 mb-2 text-[10px] font-mono uppercase tracking-wider">
+              <button
+                onClick={() => {
+                  setActiveCategories(new Set(CATEGORY_CHIP.map((c) => c.id)));
+                  setActiveActions(new Set(ALL_ACTIONS));
+                }}
+                className="text-leaf-deep hover:text-leaf cursor-pointer"
+              >
+                Select all
+              </button>
+              <span className="text-line">·</span>
+              <button
+                onClick={() => {
+                  setActiveCategories(new Set());
+                  setActiveActions(new Set());
+                }}
+                className="text-ink-faint hover:text-ink cursor-pointer"
+              >
+                Clear all
+              </button>
             </div>
             <div className="flex flex-wrap gap-1 mb-2.5">
               {CATEGORY_CHIP.map((chip) => (
@@ -980,7 +1001,7 @@ function FilterChip({
   return (
     <button
       onClick={onClick}
-      className={`px-2 py-0.5 text-xs rounded-full border flex items-center gap-1 cursor-pointer transition-colors ${
+      className={`px-2 py-0.5 text-xs rounded-lg border flex items-center gap-1 cursor-pointer transition-colors ${
         active ? activeClass : "bg-white border-line text-ink-faint"
       }`}
     >
