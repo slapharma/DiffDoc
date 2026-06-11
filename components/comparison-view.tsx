@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
   ArrowLeftRight,
   ArrowUpToLine,
   BookOpen,
@@ -10,14 +9,10 @@ import {
   ChevronDown,
   ChevronUp,
   Crosshair,
-  FileText,
   GitCompare,
   Hash,
   Layers,
-  Minus,
   Pencil,
-  Plus,
-  Repeat,
   Search,
   Sparkles,
   X,
@@ -47,6 +42,7 @@ import {
 import type { DiffChunk } from "@/lib/diff/types";
 import { ReportView } from "./report-view";
 import { BuildStamp } from "./build-stamp";
+import { Wordmark } from "./wordmark";
 
 export type ParagraphSkeleton = {
   style: string;
@@ -101,10 +97,10 @@ const MAX_REGISTER_ENTRIES = 500;
 const PROBE = 120;
 
 const CATEGORY_CHIP: { id: Category; label: string; activeClass: string }[] = [
-  { id: "flagged", label: "Flagged", activeClass: "bg-red-50 border-red-200 text-red-700" },
-  { id: "added", label: "Added", activeClass: "bg-green-50 border-green-200 text-green-800" },
-  { id: "removed", label: "Removed", activeClass: "bg-stone-100 border-stone-300 text-stone-700" },
-  { id: "changed", label: "Changed", activeClass: "bg-amber-50 border-amber-200 text-amber-800" },
+  { id: "flagged", label: "Flagged", activeClass: "bg-flag-wash border-flag/40 text-flag" },
+  { id: "added", label: "Added", activeClass: "bg-leaf-wash border-leaf/40 text-leaf-deep" },
+  { id: "removed", label: "Removed", activeClass: "bg-paper-deep border-ink/30 text-ink" },
+  { id: "changed", label: "Changed", activeClass: "bg-white border-leaf-deep/50 text-leaf-deep" },
 ];
 
 const ALL_ACTIONS: ChangeAction[] = [
@@ -466,18 +462,15 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-stone-50 text-stone-900 font-sans">
-      <header className="border-b border-stone-200 bg-white print-hide">
+    <div className="h-screen flex flex-col bg-paper text-ink font-sans">
+      <header className="border-b border-line print-hide">
         {/* Row 1 — identity: logo, task title, documents */}
         <div className="px-6 py-2.5 flex items-center justify-between gap-6">
           <div className="flex items-center gap-5 min-w-0">
-            <a href="/" className="flex items-center gap-2 flex-shrink-0">
-              <div className="w-7 h-7 bg-stone-900 rounded-sm flex items-center justify-center">
-                <GitCompare className="w-4 h-4 text-white" strokeWidth={2.5} />
-              </div>
-              <span className="font-mono font-semibold tracking-tight text-base">diffdoc</span>
-            </a>
-            <div className="w-px h-5 bg-stone-200 flex-shrink-0" />
+            <span className="flex-shrink-0">
+              <Wordmark size="text-xl" />
+            </span>
+            <div className="w-px h-5 bg-line flex-shrink-0" />
             {editingTitle ? (
               <form
                 className="flex items-center gap-1.5 min-w-0"
@@ -492,15 +485,15 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                   onChange={(e) => setTitleDraft(e.target.value)}
                   onKeyDown={(e) => e.key === "Escape" && setEditingTitle(false)}
                   maxLength={120}
-                  className="text-sm font-semibold text-stone-900 border border-stone-300 rounded px-2 py-1 w-72 focus:outline-none focus:ring-1 focus:ring-stone-900"
+                  className="text-base font-display font-bold text-ink bg-white border border-line rounded px-2 py-1 w-80 focus:outline-none focus:ring-1 focus:ring-leaf"
                 />
-                <button type="submit" className="p-1 text-green-700 hover:bg-green-50 rounded" aria-label="Save title">
+                <button type="submit" className="p-1 text-leaf-deep hover:bg-leaf-wash rounded" aria-label="Save title">
                   <Check className="w-4 h-4" />
                 </button>
                 <button
                   type="button"
                   onClick={() => setEditingTitle(false)}
-                  className="p-1 text-stone-400 hover:bg-stone-50 rounded"
+                  className="p-1 text-ink-faint hover:bg-paper-deep rounded"
                   aria-label="Cancel"
                 >
                   <X className="w-4 h-4" />
@@ -513,46 +506,46 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                   setEditingTitle(true);
                 }}
                 title="Rename this comparison"
-                className="group flex items-center gap-1.5 min-w-0 text-sm font-semibold text-stone-900 hover:text-stone-700"
+                className="group flex items-center gap-2 min-w-0 text-base font-display font-bold text-ink hover:text-ink-soft"
               >
                 <span className="truncate">{title}</span>
-                <Pencil className="w-3 h-3 text-stone-300 group-hover:text-stone-500 flex-shrink-0" />
+                <Pencil className="w-3 h-3 text-ink-faint group-hover:text-leaf-deep flex-shrink-0" />
               </button>
             )}
           </div>
           <div className="flex items-center gap-2 text-xs flex-shrink-0">
             <DocBadge role="Primary" name={comparison.doc_a_name} />
-            <ArrowLeftRight className="w-3 h-3 text-stone-300" />
+            <ArrowLeftRight className="w-3 h-3 text-ink-faint" />
             <DocBadge role="Comparator" name={comparison.doc_b_name} />
           </div>
         </div>
 
         {/* Row 2 — toolbar: search, jump, navigation, views */}
-        <div className="px-6 py-2 bg-stone-50/70 border-t border-stone-100 flex items-center justify-between gap-4">
+        <div className="px-6 py-2 border-t border-line flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 min-w-0">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 runSearch();
               }}
-              className="flex items-center bg-white border border-stone-200 rounded-md overflow-hidden"
+              className="flex items-center bg-white border border-line rounded-full overflow-hidden"
             >
-              <Search className="w-3.5 h-3.5 text-stone-400 ml-2 flex-shrink-0" />
+              <Search className="w-3.5 h-3.5 text-ink-faint ml-3 flex-shrink-0" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search text…"
-                className="px-2 py-1.5 text-xs w-44 focus:outline-none"
+                className="px-2 py-1.5 text-xs w-44 focus:outline-none bg-transparent"
               />
               {query && (
-                <button type="button" onClick={clearSearch} className="p-1 text-stone-300 hover:text-stone-600" aria-label="Clear search">
+                <button type="button" onClick={clearSearch} className="p-1 text-ink-faint hover:text-ink" aria-label="Clear search">
                   <X className="w-3 h-3" />
                 </button>
               )}
               <select
                 value={scope}
                 onChange={(e) => setScope(e.target.value as SearchScope)}
-                className="text-xs text-stone-600 bg-stone-50 border-l border-stone-200 px-1.5 py-1.5 focus:outline-none"
+                className="text-xs text-ink-soft bg-paper-deep border-l border-line px-2 py-1.5 focus:outline-none"
                 aria-label="Search scope"
               >
                 <option value="both">Both</option>
@@ -561,20 +554,20 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               </select>
             </form>
             {matches.length > 0 && (
-              <div className="flex items-center gap-0.5 text-xs text-stone-600">
-                <span className="font-mono">
+              <div className="flex items-center gap-0.5 text-xs text-ink-soft">
+                <span className="font-mono text-leaf-deep font-bold">
                   {matchIndex + 1}/{matches.length}
                 </span>
-                <button onClick={() => goToMatch(matchIndex - 1)} className="p-1 hover:bg-stone-100 rounded" aria-label="Previous match">
+                <button onClick={() => goToMatch(matchIndex - 1)} className="p-1 hover:bg-paper-deep rounded" aria-label="Previous match">
                   <ChevronUp className="w-3.5 h-3.5" />
                 </button>
-                <button onClick={() => goToMatch(matchIndex + 1)} className="p-1 hover:bg-stone-100 rounded" aria-label="Next match">
+                <button onClick={() => goToMatch(matchIndex + 1)} className="p-1 hover:bg-paper-deep rounded" aria-label="Next match">
                   <ChevronDown className="w-3.5 h-3.5" />
                 </button>
               </div>
             )}
             {lastSearch.current && matches.length === 0 && (
-              <span className="text-xs text-stone-400">No matches</span>
+              <span className="text-xs text-ink-faint font-serif italic">No matches</span>
             )}
             {jump.targets.length > 0 && (
               <select
@@ -583,7 +576,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                   handleJumpSelect(e.target.value);
                   e.target.value = "";
                 }}
-                className="text-xs text-stone-600 bg-white border border-stone-200 rounded-md px-2 py-1.5 max-w-48 focus:outline-none"
+                className="text-xs text-ink bg-white border border-line rounded-full px-3 py-1.5 max-w-48 focus:outline-none"
                 aria-label="Jump to"
               >
                 <option value="" disabled>
@@ -599,17 +592,16 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-xs text-stone-500 flex items-center gap-1.5 mr-1">
-              <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+            <span className="text-xs text-ink-soft flex items-center gap-1.5 mr-1">
               {similarity != null && (
                 <>
-                  <span className="font-mono font-semibold text-stone-700">{similarity}%</span>
-                  <span>similar ·</span>
+                  <span className="font-mono font-bold text-leaf-deep">{similarity}%</span>
+                  <span className="font-serif italic">similar ·</span>
                 </>
               )}
-              <span>
+              <span className="font-serif italic">
                 recommends{" "}
-                <span className="font-medium text-stone-700">
+                <span className="font-medium not-italic text-ink">
                   {MODE_META[recommended]?.label ?? recommended}
                 </span>
               </span>
@@ -617,7 +609,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
             <button
               onClick={scrollBothToTop}
               title="Scroll both documents back to the top"
-              className="px-2.5 py-1 text-xs font-medium rounded-md border bg-white text-stone-600 border-stone-200 hover:bg-stone-50 flex items-center gap-1.5"
+              className="px-3 py-1 text-xs font-medium rounded-full border bg-white text-ink-soft border-line hover:border-ink/40 flex items-center gap-1.5 transition-colors"
             >
               <ArrowUpToLine className="w-3 h-3" />
               Top
@@ -625,7 +617,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
             <button
               onClick={alignPanes}
               title="Align the other document to your current reading position"
-              className="px-2.5 py-1 text-xs font-medium rounded-md border bg-white text-stone-600 border-stone-200 hover:bg-stone-50 flex items-center gap-1.5"
+              className="px-3 py-1 text-xs font-medium rounded-full border bg-white text-ink-soft border-line hover:border-ink/40 flex items-center gap-1.5 transition-colors"
             >
               <Crosshair className="w-3 h-3" />
               Align
@@ -633,29 +625,32 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
             <button
               onClick={() => setSyncOn((v) => !v)}
               title="When on, both documents scroll together and clicking a change aligns both panes."
-              className={`px-2.5 py-1 text-xs font-medium rounded-md border flex items-center gap-1.5 transition-colors ${
+              className={`px-3 py-1 text-xs font-medium rounded-full border flex items-center gap-1.5 transition-colors ${
                 syncOn
-                  ? "bg-stone-900 text-white border-stone-900"
-                  : "bg-white text-stone-600 border-stone-200 hover:bg-stone-50"
+                  ? "bg-ink text-paper border-ink"
+                  : "bg-white text-ink-soft border-line hover:border-ink/40"
               }`}
             >
-              <ArrowLeftRight className="w-3 h-3" />
+              <ArrowLeftRight className={`w-3 h-3 ${syncOn ? "text-leaf-ring" : ""}`} />
               Move in sync
             </button>
-            <div className="flex items-center gap-1 bg-white border border-stone-200 rounded-md p-0.5">
+            <div className="flex items-center gap-4 ml-2">
               {(Object.keys(MODE_META) as ModeId[]).map((id) => {
-                const Icon = MODE_META[id].icon;
                 const active = mode === id;
                 return (
                   <button
                     key={id}
                     onClick={() => setMode(id)}
-                    className={`px-2.5 py-1 text-xs font-medium rounded flex items-center gap-1.5 transition-colors ${
-                      active ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-50"
+                    className={`relative pb-1 text-xs transition-colors ${
+                      active
+                        ? "font-semibold text-ink"
+                        : "text-ink-faint hover:text-ink-soft"
                     }`}
                   >
-                    <Icon className="w-3 h-3" />
                     {MODE_META[id].label}
+                    {active && (
+                      <span className="absolute left-0 right-0 -bottom-0.5 h-[3px] bg-leaf rounded-full" />
+                    )}
                   </button>
                 );
               })}
@@ -665,13 +660,15 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
       </header>
 
       <div className="flex-1 min-h-0 flex print-expand">
-        <aside className="w-72 border-r border-stone-200 bg-white flex flex-col print-hide">
-          <div className="p-4 border-b border-stone-100">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-500">
-                Differences
+        <aside className="w-72 border-r border-line bg-white flex flex-col print-hide">
+          <div className="p-4 border-b border-line">
+            <div className="flex items-baseline justify-between mb-2.5">
+              <h3 className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-ink-faint">
+                Proof marks
               </h3>
-              <span className="font-mono text-xs text-stone-400">{entries.length} total</span>
+              <span className="font-mono text-lg font-bold text-leaf-deep leading-none">
+                {entries.length}
+              </span>
             </div>
             <div className="flex flex-wrap gap-1 mb-3">
               {CATEGORY_CHIP.map((chip) => (
@@ -685,7 +682,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 />
               ))}
             </div>
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-stone-400 mb-1.5">
+            <div className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-ink-faint mb-1.5">
               Action
             </div>
             <div className="flex flex-wrap gap-1">
@@ -695,7 +692,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                   label={ACTION_LABELS[action]}
                   count={actionCounts[action]}
                   active={activeActions.has(action)}
-                  activeClass="bg-blue-50 border-blue-200 text-blue-800"
+                  activeClass="bg-leaf-wash border-leaf/40 text-leaf-deep"
                   onClick={() => toggleIn(activeActions, action, setActiveActions)}
                 />
               ))}
@@ -704,7 +701,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
 
           <div className="flex-1 overflow-y-auto">
             {entries.length === 0 && (
-              <p className="p-4 text-sm text-stone-500">
+              <p className="p-4 text-sm font-serif italic text-ink-soft">
                 No differences found — the documents are textually identical.
               </p>
             )}
@@ -712,12 +709,12 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               const isSelected = selected?.id === entry.id;
               const borderClass =
                 entry.category === "flagged"
-                  ? "border-l-red-500 bg-red-50/40"
+                  ? "border-l-flag bg-flag-wash/50"
                   : entry.category === "added"
-                    ? "border-l-green-500 bg-green-50/40"
+                    ? "border-l-leaf bg-leaf-wash/50"
                     : entry.category === "changed"
-                      ? "border-l-amber-500 bg-amber-50/40"
-                      : "border-l-stone-400 bg-white";
+                      ? "border-l-leaf-deep bg-white"
+                      : "border-l-ink-faint bg-white";
               return (
                 <button
                   key={entry.id}
@@ -725,33 +722,33 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                     if (mode !== "side_by_side") setMode("side_by_side");
                     jumpTo(entry);
                   }}
-                  className={`w-full text-left px-3 py-2.5 border-l-2 border-b border-stone-100 hover:bg-stone-50 transition-colors ${borderClass} ${
-                    isSelected ? "ring-1 ring-stone-900 bg-stone-50" : ""
+                  className={`w-full text-left px-3 py-2.5 border-l-2 border-b border-line hover:bg-paper-deep/60 transition-colors ${borderClass} ${
+                    isSelected ? "ring-1 ring-ink bg-paper-deep/60" : ""
                   }`}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <EntryIcon entry={entry} />
-                    <span className="text-[10px] uppercase tracking-wide text-stone-400 truncate">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-ink-faint truncate">
                       {entryTag(entry)}
                     </span>
                   </div>
-                  <p className="text-sm text-stone-800 leading-snug line-clamp-2">
+                  <p className="text-sm font-serif text-ink leading-snug line-clamp-2">
                     {entrySnippet(entry)}
                   </p>
                 </button>
               );
             })}
             {visible.length > MAX_REGISTER_ENTRIES && (
-              <p className="p-3 text-xs text-stone-400 text-center">
+              <p className="p-3 text-xs text-ink-faint text-center font-serif italic">
                 Showing first {MAX_REGISTER_ENTRIES} of {visible.length} differences.
               </p>
             )}
           </div>
         </aside>
 
-        <main className="flex-1 overflow-hidden bg-stone-50 print-expand">
+        <main className="flex-1 overflow-hidden bg-paper print-expand">
           {mode === "side_by_side" && (
-            <div className="flex h-full">
+            <div className="flex h-full gap-4 p-4">
               <DocPane
                 pane="a"
                 label={comparison.doc_a_name ?? "Document A"}
@@ -766,7 +763,6 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 }}
                 onContextMenu={(e) => handleContextMenu("a", e)}
               />
-              <div className="w-px bg-stone-200" />
               <DocPane
                 pane="b"
                 label={comparison.doc_b_name ?? "Document B"}
@@ -806,17 +802,17 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           {mode === "aligned_sections" && (
             <div className="h-full flex items-center justify-center">
               <div className="max-w-md text-center px-6">
-                <Sparkles className="w-8 h-8 text-amber-700 mx-auto mb-3" />
-                <h2 className="font-semibold text-stone-900 mb-2">
+                <Sparkles className="w-8 h-8 text-leaf mx-auto mb-3" />
+                <h2 className="font-display font-bold text-lg text-ink mb-2">
                   Aligned sections arrives with the AI layer
                 </h2>
-                <p className="text-sm text-stone-600 mb-4">
+                <p className="text-sm font-serif text-ink-soft mb-5">
                   Semantic section alignment is part of the next build phase. Side-by-side
                   shows every literal change today.
                 </p>
                 <button
                   onClick={() => setMode("side_by_side")}
-                  className="px-4 py-1.5 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800"
+                  className="px-5 py-2 text-sm font-medium bg-ink text-paper rounded-full hover:bg-ink/85"
                 >
                   Back to side-by-side
                 </button>
@@ -837,7 +833,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
             }}
           />
           <div
-            className="fixed z-50 bg-white border border-stone-200 rounded-md shadow-lg py-1 text-sm"
+            className="fixed z-50 bg-white border border-ink/20 rounded-lg shadow-lg py-1 text-sm"
             style={{
               left: Math.min(ctxMenu.x, window.innerWidth - 260),
               top: Math.min(ctxMenu.y, window.innerHeight - 60),
@@ -845,20 +841,20 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           >
             <button
               onClick={() => locateInOther(ctxMenu)}
-              className="w-full text-left px-3 py-1.5 hover:bg-stone-50 flex items-center gap-2 text-stone-800"
+              className="w-full text-left px-3 py-1.5 hover:bg-leaf-wash flex items-center gap-2 text-ink"
             >
-              <Crosshair className="w-3.5 h-3.5 text-stone-500" />
+              <Crosshair className="w-3.5 h-3.5 text-leaf-deep" />
               Locate in {ROLE_LABEL[ctxMenu.pane === "a" ? "b" : "a"]}
             </button>
           </div>
         </>
       )}
 
-      <footer className="border-t border-stone-200 bg-white px-6 py-2 flex items-center justify-between text-xs text-stone-500 font-mono print-hide">
+      <footer className="border-t border-line px-6 py-2 flex items-center justify-between text-xs text-ink-faint font-mono print-hide">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5">
             <Hash className="w-3 h-3" />
-            {shortHash(comparison.doc_a_hash)} vs {shortHash(comparison.doc_b_hash)}
+            {shortHash(comparison.doc_a_hash)} ⇄ {shortHash(comparison.doc_b_hash)}
           </span>
           <span>{new Date(comparison.created_at).toLocaleString()}</span>
         </div>
@@ -868,26 +864,33 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
   );
 }
 
+/** Stamp-style document badge: outlined, slightly rotated, like an inked stamp. */
 function DocBadge({ role, name }: { role: string; name: string | null }) {
   return (
-    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 rounded-md min-w-0 max-w-56">
-      <span className="text-[10px] uppercase tracking-wider font-semibold text-stone-400 flex-shrink-0">
+    <div className="flex flex-col px-3 py-1.5 border-[1.5px] border-ink/70 rounded min-w-0 max-w-56 -rotate-1 bg-white/60">
+      <span className="text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-leaf-deep flex-shrink-0">
         {role}
       </span>
-      <FileText className="w-3 h-3 text-stone-400 flex-shrink-0" />
-      <span className="font-medium text-stone-700 truncate">{name ?? "—"}</span>
+      <span className="font-medium text-ink truncate text-xs">{name ?? "—"}</span>
     </div>
   );
 }
 
+/** Proofreader's marks: ⌃ inserted, ⌫ struck, ↻ replaced. */
 function EntryIcon({ entry }: { entry: RegisterEntry }) {
-  if (entry.category === "flagged")
-    return <AlertTriangle className="w-3 h-3 text-red-600 flex-shrink-0" />;
-  if (entry.action === "addition")
-    return <Plus className="w-3 h-3 text-green-700 flex-shrink-0" />;
-  if (entry.action === "deletion")
-    return <Minus className="w-3 h-3 text-stone-500 flex-shrink-0" />;
-  return <Repeat className="w-3 h-3 text-amber-700 flex-shrink-0" />;
+  const glyph =
+    entry.action === "addition" ? "⌃" : entry.action === "deletion" ? "⌫" : "↻";
+  const color =
+    entry.category === "flagged"
+      ? "text-flag"
+      : entry.action === "deletion"
+        ? "text-ink-soft"
+        : "text-leaf-deep";
+  return (
+    <span className={`font-mono font-bold text-sm leading-none flex-shrink-0 ${color}`}>
+      {glyph}
+    </span>
+  );
 }
 
 function entryTag(entry: RegisterEntry): string {
@@ -926,7 +929,7 @@ function FilterChip({
     <button
       onClick={onClick}
       className={`px-2 py-0.5 text-xs rounded-full border flex items-center gap-1 ${
-        active ? activeClass : "bg-white border-stone-200 text-stone-400"
+        active ? activeClass : "bg-white border-line text-ink-faint"
       }`}
     >
       {label} <span className="font-mono">{count}</span>
@@ -935,15 +938,20 @@ function FilterChip({
 }
 
 const PARAGRAPH_CLASS: Record<string, string> = {
-  heading1: "text-2xl font-bold text-stone-900 mt-6 mb-2",
-  heading2: "text-xl font-bold text-stone-900 mt-5 mb-2",
-  heading3: "text-base font-semibold text-stone-900 mt-4 mb-1.5",
-  heading4: "text-sm font-semibold text-stone-900 mt-3 mb-1",
-  body: "text-stone-800 leading-relaxed mb-3",
-  list: "text-stone-800 leading-relaxed mb-1 pl-5",
-  quote: "text-stone-700 italic border-l-2 border-stone-300 pl-3 mb-3",
+  heading1: "font-display text-2xl font-bold text-ink mt-6 mb-2",
+  heading2: "font-display text-xl font-bold text-ink mt-5 mb-2",
+  heading3: "text-base font-semibold text-ink mt-4 mb-1.5",
+  heading4: "text-sm font-semibold text-ink mt-3 mb-1",
+  body: "text-ink leading-relaxed mb-3",
+  list: "text-ink leading-relaxed mb-1 pl-5",
+  quote: "text-ink-soft italic border-l-2 border-line pl-3 mb-3",
 };
 
+/**
+ * Proof-mark styling: insertions read as green-inked additions (underlined),
+ * deletions as quietly struck text. Red is reserved for flagged risk in the
+ * register, not for ordinary removals.
+ */
 function segmentClass(
   op: DiffChunk["op"],
   isSelected: boolean,
@@ -953,10 +961,10 @@ function segmentClass(
     op === "equal"
       ? ""
       : op === "delete"
-        ? "bg-red-100 text-red-900 rounded line-through decoration-red-500"
-        : "bg-green-100 text-green-900 rounded";
-  if (isFlashing) return `${base} ring-2 ring-amber-500 bg-amber-100 animate-pulse`;
-  return isSelected && op !== "equal" ? `${base} ring-2 ring-stone-900` : base;
+        ? "bg-paper-deep text-ink-soft rounded line-through decoration-ink-faint"
+        : "bg-leaf-wash text-leaf-deep rounded underline decoration-leaf decoration-2 underline-offset-2";
+  if (isFlashing) return `${base} ring-2 ring-leaf bg-leaf-wash animate-pulse`;
+  return isSelected && op !== "equal" ? `${base} ring-2 ring-ink` : base;
 }
 
 function DocPane({
@@ -987,18 +995,18 @@ function DocPane({
   const hidden = pane === "a" ? "insert" : "delete";
 
   return (
-    <div className="flex-1 flex flex-col bg-white min-w-0">
-      <div className="px-6 py-2.5 border-b border-stone-100 bg-stone-50/50 flex items-center gap-2">
+    <div className="flex-1 flex flex-col bg-white min-w-0 rounded-xl border border-line overflow-hidden">
+      <div className="px-6 py-2.5 border-b border-line flex items-center gap-2.5">
         <span
-          className={`text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded ${
-            pane === "a" ? "bg-stone-900 text-white" : "bg-stone-200 text-stone-600"
+          className={`text-[9px] font-mono font-bold uppercase tracking-[0.2em] px-2 py-1 rounded ${
+            pane === "a" ? "bg-ink text-paper" : "bg-leaf-wash text-leaf-deep"
           }`}
         >
           {ROLE_LABEL[pane]}
         </span>
         <div className="min-w-0">
-          <div className="text-sm font-medium text-stone-900 truncate">{label}</div>
-          <div className="text-xs text-stone-500">
+          <div className="text-sm font-medium text-ink truncate">{label}</div>
+          <div className="text-[11px] text-ink-faint font-mono">
             {meta?.pageCount ? `${meta.pageCount} pages · ` : ""}
             {meta?.wordCount ? `${meta.wordCount.toLocaleString()} words` : ""}
           </div>
@@ -1040,7 +1048,7 @@ function DocPane({
           ) : (
             // Fallback for comparisons processed before paragraph skeletons
             // were stored: continuous chunk stream.
-            <div className="text-stone-800 leading-relaxed whitespace-pre-wrap break-words">
+            <div className="text-ink leading-relaxed whitespace-pre-wrap break-words">
               {chunks.map((chunk, index) => {
                 if (chunk.op === hidden) return null;
                 return (

@@ -63,34 +63,34 @@ export default function ComparisonPage({ params }: { params: { id: string } }) {
   if (status === "complete" && data) return <ComparisonView data={data} />;
 
   return (
-    <div className="min-h-screen bg-stone-50 flex items-center justify-center font-sans">
+    <div className="min-h-screen bg-paper flex items-center justify-center font-sans">
       <div className="text-center max-w-sm px-6">
         {status === "failed" || status === "missing" ? (
           <>
-            <AlertTriangle className="w-8 h-8 text-red-600 mx-auto mb-3" />
-            <h1 className="font-semibold text-stone-900 mb-2">
+            <AlertTriangle className="w-8 h-8 text-flag mx-auto mb-3" />
+            <h1 className="font-display font-bold text-lg text-ink mb-2">
               {status === "missing" ? "Comparison not found" : "Processing failed"}
             </h1>
-            <p className="text-sm text-stone-600 mb-4">
+            <p className="text-sm font-serif text-ink-soft mb-5">
               {status === "missing"
                 ? "This comparison doesn't exist or the link is wrong."
                 : "Something went wrong while parsing or diffing the documents."}
             </p>
             <a
               href="/"
-              className="inline-block px-4 py-1.5 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800"
+              className="inline-block px-5 py-2 text-sm font-medium bg-ink text-paper rounded-full hover:bg-ink/85"
             >
               Start a new comparison
             </a>
           </>
         ) : (
           <>
-            <Loader2 className="w-8 h-8 text-stone-700 mx-auto mb-3 animate-spin" />
-            <h1 className="font-semibold text-stone-900 mb-1">
+            <Loader2 className="w-8 h-8 text-leaf mx-auto mb-3 animate-spin" />
+            <h1 className="font-display font-bold text-lg text-ink mb-1">
               {status === "processing" ? "Comparing documents…" : "Preparing comparison…"}
             </h1>
-            <p className="text-sm text-stone-500">
-              Parsing both files and computing the diff. Usually takes a few seconds.
+            <p className="text-sm font-serif italic text-ink-soft">
+              Reading both files and marking up the differences. Usually takes a few seconds.
             </p>
           </>
         )}

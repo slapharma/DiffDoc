@@ -44,21 +44,21 @@ export function ReportView({
     .slice(0, 5);
 
   return (
-    <div className="h-full overflow-y-auto bg-stone-50 print-expand">
+    <div className="h-full overflow-y-auto bg-paper print-expand">
       <div className="max-w-4xl mx-auto px-8 py-8 print:px-0">
         <div className="flex items-start justify-between mb-8">
           <div>
-            <div className="text-xs uppercase tracking-wider text-stone-500 font-semibold mb-1">
+            <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-ink-faint font-bold mb-1">
               Comparison report
             </div>
-            <h1 className="text-3xl font-bold font-serif text-stone-900">{title}</h1>
-            <p className="text-sm text-stone-500 mt-1">
+            <h1 className="text-3xl font-bold font-display text-ink">{title}</h1>
+            <p className="text-sm font-serif italic text-ink-soft mt-1">
               Generated {new Date(createdAt).toLocaleString()} · literal comparison
             </p>
           </div>
           <button
             onClick={() => window.print()}
-            className="print-hide px-4 py-2 bg-stone-900 text-white rounded-md text-sm font-medium flex items-center gap-2 hover:bg-stone-800"
+            className="print-hide px-4 py-2 bg-leaf text-white rounded-full text-sm font-medium flex items-center gap-2 hover:bg-leaf-deep"
           >
             <Download className="w-4 h-4" /> Download PDF
           </button>
@@ -82,12 +82,12 @@ export function ReportView({
         <SectionTitle>Documents</SectionTitle>
         <div className="grid grid-cols-2 gap-4 mb-8">
           {[primary, comparator].map((doc) => (
-            <div key={doc.role} className="bg-white border border-stone-200 rounded-lg p-5">
-              <div className="text-[10px] uppercase tracking-wider text-stone-400 font-semibold mb-1">
+            <div key={doc.role} className="bg-white border border-line rounded-xl p-5">
+              <div className="text-[9px] font-mono uppercase tracking-[0.2em] text-ink-faint font-bold mb-1">
                 {doc.role}
               </div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-stone-900 mb-3">
-                <FileText className="w-4 h-4 text-stone-400" />
+              <div className="flex items-center gap-2 text-sm font-semibold text-ink mb-3">
+                <FileText className="w-4 h-4 text-ink-faint" />
                 <span className="truncate">{doc.name}</span>
               </div>
               <dl className="space-y-1.5 text-sm">
@@ -104,17 +104,17 @@ export function ReportView({
         </div>
 
         <SectionTitle>Changes by action</SectionTitle>
-        <div className="bg-white border border-stone-200 rounded-lg divide-y divide-stone-100 mb-8">
+        <div className="bg-white border border-line rounded-xl divide-y divide-line mb-8">
           {[...actionCounts.entries()]
             .sort((x, y) => y[1] - x[1])
             .map(([action, count]) => (
               <div key={action} className="flex items-center justify-between px-4 py-2.5 text-sm">
-                <span className="text-stone-800">{ACTION_LABELS[action]}</span>
-                <span className="font-mono text-stone-600">{count}</span>
+                <span className="text-ink font-serif">{ACTION_LABELS[action]}</span>
+                <span className="font-mono text-leaf-deep font-bold">{count}</span>
               </div>
             ))}
           {entries.length === 0 && (
-            <p className="px-4 py-3 text-sm text-stone-500">
+            <p className="px-4 py-3 text-sm font-serif italic text-ink-soft">
               No differences — the documents are textually identical.
             </p>
           )}
@@ -124,7 +124,7 @@ export function ReportView({
           <>
             <SectionTitle>
               Flagged changes{" "}
-              <span className="font-normal normal-case text-stone-400">
+              <span className="font-normal normal-case text-ink-faint">
                 ({[...reasonCounts.entries()]
                   .map(([r, c]) => `${FLAG_LABELS[r].toLowerCase()} ×${c}`)
                   .join(", ")})
@@ -135,7 +135,7 @@ export function ReportView({
                 <HighlightCard key={i} entry={entry} tone="red" />
               ))}
               {flagged.length > 12 && (
-                <p className="text-xs text-stone-400 text-center">
+                <p className="text-xs text-ink-faint text-center font-serif italic">
                   + {flagged.length - 12} more flagged changes in the workspace view
                 </p>
               )}
@@ -157,10 +157,10 @@ export function ReportView({
           </>
         )}
 
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-3 mb-8">
-          <Sparkles className="w-5 h-5 text-amber-700 mt-0.5 flex-shrink-0" />
-          <div className="text-sm text-stone-700">
-            <span className="font-semibold text-stone-900">Methodology.</span> This report is
+        <div className="p-4 bg-leaf-wash border border-leaf/30 rounded-xl flex items-start gap-3 mb-8">
+          <Sparkles className="w-5 h-5 text-leaf-deep mt-0.5 flex-shrink-0" />
+          <div className="text-sm font-serif text-ink-soft">
+            <span className="font-semibold not-italic text-ink">Methodology.</span> This report is
             based on a literal character-level comparison (diff-match-patch) of the extracted
             text, with local heuristics flagging numbers, dates, and negations. AI semantic
             classification and plain-English summaries arrive in the next build phase.
@@ -173,7 +173,7 @@ export function ReportView({
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="text-xs uppercase tracking-wider text-stone-500 font-semibold mb-3">
+    <h2 className="text-[10px] font-mono uppercase tracking-[0.2em] text-ink-faint font-bold mb-3">
       {children}
     </h2>
   );
@@ -193,16 +193,16 @@ function StatCard({
   return (
     <div
       className={`rounded-lg p-5 border ${
-        highlight ? "bg-red-50 border-red-200" : "bg-white border-stone-200"
+        highlight ? "bg-flag-wash border-flag/40" : "bg-white border-line"
       }`}
     >
-      <div className="text-[10px] uppercase tracking-wider text-stone-400 font-semibold">
+      <div className="text-[9px] font-mono uppercase tracking-[0.2em] text-ink-faint font-bold">
         {label}
       </div>
-      <div className={`text-3xl font-bold font-mono mt-1 ${highlight ? "text-red-700" : "text-stone-900"}`}>
+      <div className={`text-3xl font-bold font-mono mt-1 ${highlight ? "text-flag" : "text-ink"}`}>
         {value}
       </div>
-      <div className="text-xs text-stone-500 mt-0.5">{sub}</div>
+      <div className="text-xs font-serif italic text-ink-soft mt-0.5">{sub}</div>
     </div>
   );
 }
@@ -210,10 +210,10 @@ function StatCard({
 function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <div className="flex">
-      <dt className="w-20 font-mono text-xs uppercase tracking-wide text-stone-400 pt-0.5">
+      <dt className="w-20 font-mono text-xs uppercase tracking-wide text-ink-faint pt-0.5">
         {k}
       </dt>
-      <dd className={`flex-1 text-stone-800 ${mono ? "font-mono text-xs pt-0.5" : ""}`}>{v}</dd>
+      <dd className={`flex-1 text-ink ${mono ? "font-mono text-xs pt-0.5" : ""}`}>{v}</dd>
     </div>
   );
 }
@@ -226,25 +226,25 @@ function HighlightCard({
   tone: "red" | "green" | "stone";
 }) {
   const border =
-    tone === "red" ? "border-l-red-500" : tone === "green" ? "border-l-green-500" : "border-l-stone-400";
+    tone === "red" ? "border-l-flag" : tone === "green" ? "border-l-leaf" : "border-l-ink-faint";
   return (
-    <div className={`bg-white border border-stone-200 border-l-2 ${border} rounded-lg px-4 py-3`}>
-      <div className="text-[10px] uppercase tracking-wide text-stone-400 mb-1">
+    <div className={`bg-white border border-line border-l-2 ${border} rounded-lg px-4 py-3`}>
+      <div className="text-[10px] font-mono uppercase tracking-wider text-ink-faint mb-1">
         {ACTION_LABELS[entry.action]}
         {entry.reasons.length > 0 &&
           ` · ${entry.reasons.map((r) => FLAG_LABELS[r]).join(" · ")}`}
       </div>
-      <div className="text-sm text-stone-800 font-serif">
+      <div className="text-sm text-ink font-serif">
         {entry.before !== undefined && (
-          <span className={entry.after !== undefined ? "line-through text-red-800 bg-red-50 px-1 rounded" : ""}>
+          <span className={entry.after !== undefined ? "line-through text-ink-soft bg-paper-deep px-1 rounded decoration-ink-faint" : ""}>
             {clip(entry.before)}
           </span>
         )}
         {entry.before !== undefined && entry.after !== undefined && (
-          <span className="text-stone-400 mx-1.5">→</span>
+          <span className="text-ink-faint mx-1.5">→</span>
         )}
         {entry.after !== undefined && (
-          <span className={entry.before !== undefined ? "bg-green-50 text-green-900 px-1 rounded" : ""}>
+          <span className={entry.before !== undefined ? "bg-leaf-wash text-leaf-deep px-1 rounded" : ""}>
             {clip(entry.after)}
           </span>
         )}
