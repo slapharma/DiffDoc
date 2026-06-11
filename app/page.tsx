@@ -6,8 +6,11 @@ import { Clock, FileText, GitCompare, Loader2, Upload, X } from "lucide-react";
 
 type Side = "a" | "b";
 
+import { BuildStamp } from "@/components/build-stamp";
+
 type RecentComparison = {
   id: string;
+  title: string | null;
   doc_a_name: string | null;
   doc_b_name: string | null;
   similarity_score: number | null;
@@ -94,16 +97,16 @@ export default function Home() {
           <div className="grid grid-cols-2 gap-4 mb-6">
             <FileSlot
               side="a"
-              label="Document A"
-              hint="Original"
+              label="Primary"
+              hint="your reference document"
               file={files.a}
               disabled={busy}
               onSelect={(f) => setFiles((prev) => ({ ...prev, a: f }))}
             />
             <FileSlot
               side="b"
-              label="Document B"
-              hint="Revised"
+              label="Comparator"
+              hint="the document to compare against it"
               file={files.b}
               disabled={busy}
               onSelect={(f) => setFiles((prev) => ({ ...prev, b: f }))}
@@ -139,7 +142,7 @@ export default function Home() {
       </main>
 
       <footer className="border-t border-stone-200 bg-white px-6 py-2 text-xs text-stone-500 font-mono text-center">
-        v0.1.0-beta
+        <BuildStamp />
       </footer>
     </div>
   );
@@ -205,9 +208,13 @@ function RecentComparisons() {
           >
             <FileText className="w-4 h-4 text-stone-400 flex-shrink-0" />
             <span className="flex-1 min-w-0 text-sm text-stone-800 truncate">
-              {item.doc_a_name ?? "Document A"}{" "}
-              <span className="text-stone-400">vs</span>{" "}
-              {item.doc_b_name ?? "Document B"}
+              {item.title ?? (
+                <>
+                  {item.doc_a_name ?? "Primary"}{" "}
+                  <span className="text-stone-400">vs</span>{" "}
+                  {item.doc_b_name ?? "Comparator"}
+                </>
+              )}
             </span>
             {item.status === "complete" && item.similarity_score != null ? (
               <span className="font-mono text-xs text-stone-500">

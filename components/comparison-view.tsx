@@ -6,15 +6,21 @@ import {
   ArrowLeftRight,
   ArrowUpToLine,
   BookOpen,
+  Check,
+  ChevronDown,
+  ChevronUp,
   Crosshair,
   FileText,
   GitCompare,
   Hash,
   Layers,
   Minus,
+  Pencil,
   Plus,
   Repeat,
+  Search,
   Sparkles,
+  X,
 } from "lucide-react";
 import { projectRange } from "@/lib/diff/project";
 import {
@@ -24,6 +30,13 @@ import {
   nearestAnchorPosition,
   type AnchorMap,
 } from "@/lib/diff/scroll-map";
+import {
+  chunkAtOffset,
+  jumpTargets,
+  searchSide,
+  type JumpTarget,
+  type SearchMatch,
+} from "@/lib/diff/navigate";
 import { detectFlags, FLAG_LABELS, type FlagReason } from "@/lib/pipeline/flags";
 import {
   pairChanges,
@@ -32,6 +45,8 @@ import {
   type ChangeEntry,
 } from "@/lib/pipeline/actions";
 import type { DiffChunk } from "@/lib/diff/types";
+import { ReportView } from "./report-view";
+import { BuildStamp } from "./build-stamp";
 
 export type ParagraphSkeleton = {
   style: string;
@@ -43,6 +58,7 @@ export type ParagraphSkeleton = {
 export type ComparisonData = {
   comparison: {
     id: string;
+    title: string | null;
     doc_a_name: string | null;
     doc_b_name: string | null;
     doc_a_hash: string | null;
@@ -69,7 +85,7 @@ type ModeId = "side_by_side" | "aligned_sections" | "summary_first";
 const MODE_META: Record<ModeId, { label: string; icon: typeof GitCompare }> = {
   side_by_side: { label: "Side-by-side", icon: GitCompare },
   aligned_sections: { label: "Aligned sections", icon: Layers },
-  summary_first: { label: "Summary-first", icon: BookOpen },
+  summary_first: { label: "Report", icon: BookOpen },
 };
 
 type Category = "flagged" | "added" | "removed" | "changed";
@@ -101,6 +117,10 @@ const ALL_ACTIONS: ChangeAction[] = [
 
 type Pane = "a" | "b";
 
+const ROLE_LABEL: Record<Pane, string> = { a: "Primary", b: "Comparator" };
+
+type SearchScope = "a" | "b" | "both";
+
 type ContextMenuState = { x: number; y: number; pane: Pane; index: number };
 
 export function ComparisonView({ data }: { data: ComparisonData }) {
@@ -116,6 +136,19 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
   const [activeActions, setActiveActions] = useState<Set<ChangeAction>>(
     () => new Set(ALL_ACTIONS),
   );
+
+  // Task title (item 7): editable, saved via PATCH.
+  const defaultTitle = `${comparison.doc_a_name ?? "Primary"} vs ${comparison.doc_b_name ?? "Comparator"}`;
+  const [title, setTitle] = useState(comparison.title ?? defaultTitle);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(title);
+
+  // Search (item 3).
+  const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<SearchScope>("both");
+  const [matches, setMatches] = useState<SearchMatch[]>([]);
+  const [matchIndex, setMatchIndex] = useState(-1);
+  const lastSearch = useRef<{ query: string; scope: SearchScope } | null>(null);
 
   const paneARef = useRef<HTMLDivElement>(null);
   const paneBRef = useRef<HTMLDivElement>(null);
@@ -153,6 +186,14 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     for (const e of entries) counts[e.action]++;
     return counts;
   }, [entries]);
+
+  // Jump-to targets (item 2): pages for PDFs, headings for DOCX. Primary
+  // drives navigation; fall back to the Comparator when Primary has neither.
+  const jump = useMemo<{ side: Pane; targets: JumpTarget[] }>(() => {
+    const primary = jumpTargets(parsed.doc_a.paragraphs, parsed.chunks, "a");
+    if (primary.length > 0) return { side: "a", targets: primary };
+    return { side: "b", targets: jumpTargets(parsed.doc_b.paragraphs, parsed.chunks, "b") };
+  }, [parsed]);
 
   const visible = entries.filter(
     (e) => activeCategories.has(e.category) && activeActions.has(e.action),
@@ -231,24 +272,44 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     return paneEl(pane)?.querySelector(`[data-chunk="${pane}-${index}"]`) ?? null;
   }
 
+  function flashChunk(pane: Pane, index: number) {
+    setFlash({ pane, index });
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), 1800);
+  }
+
+  /** Center one pane on a chunk and (optionally) align the other pane. */
+  function revealChunk(pane: Pane, index: number, alignOther: boolean) {
+    const container = paneEl(pane);
+    const el = spanIn(pane, index);
+    if (!container || !el) return;
+    activePane.current = null;
+    const y = contentY(container, el);
+    centerOn(pane, y);
+    if (alignOther && anchorsRef.current) {
+      const other: Pane = pane === "a" ? "b" : "a";
+      const map = anchorsRef.current;
+      const mapped = pane === "a" ? mapY(map.aTops, map.bTops, y) : mapY(map.bTops, map.aTops, y);
+      centerOn(other, mapped);
+    }
+  }
+
   function jumpTo(entry: RegisterEntry) {
     setSelected(entry);
-    activePane.current = null; // programmatic scrolls must not trigger sync
+    activePane.current = null;
     const map = anchorsRef.current;
 
-    const sides: { pane: Pane; own?: number }[] = [
-      { pane: "a", own: entry.deleteIndex },
-      { pane: "b", own: entry.insertIndex },
-    ];
     const positions: Partial<Record<Pane, number>> = {};
-    for (const { pane, own } of sides) {
+    for (const { pane, own } of [
+      { pane: "a" as Pane, own: entry.deleteIndex },
+      { pane: "b" as Pane, own: entry.insertIndex },
+    ]) {
       const container = paneEl(pane);
       if (container && own !== undefined) {
         const el = spanIn(pane, own);
         if (el) positions[pane] = contentY(container, el);
       }
     }
-    // Derive the missing side from the known one via the anchor map.
     if (map) {
       if (positions.a === undefined && positions.b !== undefined) {
         positions.a = mapY(map.bTops, map.aTops, positions.b);
@@ -283,9 +344,76 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     scrollPaneTo(other, mapped - PROBE);
   }
 
+  function handleJumpSelect(value: string) {
+    const offset = Number(value);
+    if (Number.isNaN(offset)) return;
+    const index = chunkAtOffset(parsed.chunks, jump.side, offset);
+    if (index === null) return;
+    if (mode !== "side_by_side") setMode("side_by_side");
+    revealChunk(jump.side, index, true);
+  }
+
+  function runSearch() {
+    const q = query.trim();
+    if (!q) return;
+    const same =
+      lastSearch.current?.query === q && lastSearch.current?.scope === scope;
+    if (same && matches.length > 0) {
+      goToMatch((matchIndex + 1) % matches.length);
+      return;
+    }
+    const found: SearchMatch[] = [
+      ...(scope !== "b" ? searchSide(parsed.chunks, "a", q) : []),
+      ...(scope !== "a" ? searchSide(parsed.chunks, "b", q) : []),
+    ];
+    lastSearch.current = { query: q, scope };
+    setMatches(found);
+    if (found.length > 0) {
+      if (mode !== "side_by_side") setMode("side_by_side");
+      goToMatch(0, found);
+    } else {
+      setMatchIndex(-1);
+    }
+  }
+
+  function goToMatch(i: number, list: SearchMatch[] = matches) {
+    if (list.length === 0) return;
+    const wrapped = ((i % list.length) + list.length) % list.length;
+    setMatchIndex(wrapped);
+    const match = list[wrapped];
+    const index = chunkAtOffset(parsed.chunks, match.side, match.offset);
+    if (index === null) return;
+    revealChunk(match.side, index, syncOn);
+    flashChunk(match.side, index);
+  }
+
+  function clearSearch() {
+    setQuery("");
+    setMatches([]);
+    setMatchIndex(-1);
+    lastSearch.current = null;
+  }
+
+  async function saveTitle() {
+    const next = titleDraft.trim();
+    setEditingTitle(false);
+    if (!next || next === title) return;
+    setTitle(next); // optimistic
+    try {
+      const res = await fetch(`/api/comparisons/${comparison.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: next }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setTitle(title); // revert on failure
+    }
+  }
+
   function handleContextMenu(pane: Pane, e: React.MouseEvent) {
     const target = (e.target as HTMLElement).closest?.("[data-chunk]") as HTMLElement | null;
-    if (!target?.dataset.chunk) return; // fall back to the native menu
+    if (!target?.dataset.chunk) return;
     e.preventDefault();
     setCtxMenu({
       x: e.clientX,
@@ -302,8 +430,6 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     if (!container) return;
     activePane.current = null;
 
-    // Prefer the exact chunk if it exists in the other pane; otherwise the
-    // nearest chunk that does.
     let targetIndex: number | null = null;
     for (let distance = 0; distance < 80 && targetIndex === null; distance++) {
       for (const k of distance === 0 ? [menu.index] : [menu.index - distance, menu.index + distance]) {
@@ -324,12 +450,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     }
     if (y === null) return;
     centerOn(other, y);
-
-    if (targetIndex !== null) {
-      setFlash({ pane: other, index: targetIndex });
-      if (flashTimer.current) clearTimeout(flashTimer.current);
-      flashTimer.current = setTimeout(() => setFlash(null), 1800);
-    }
+    if (targetIndex !== null) flashChunk(other, targetIndex);
   }
 
   function toggleIn<T>(set: Set<T>, value: T, update: (next: Set<T>) => void) {
@@ -344,49 +465,155 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     b: selected?.insertIndex ?? null,
   };
 
-  const otherDocName = (pane: Pane) =>
-    pane === "a"
-      ? comparison.doc_b_name ?? "Document B"
-      : comparison.doc_a_name ?? "Document A";
-
   return (
-    <div className="min-h-screen bg-stone-50 text-stone-900 font-sans">
-      <header className="border-b border-stone-200 bg-white">
-        <div className="px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <a href="/" className="flex items-center gap-2">
+    <div className="h-screen flex flex-col bg-stone-50 text-stone-900 font-sans">
+      <header className="border-b border-stone-200 bg-white print-hide">
+        {/* Row 1 — identity: logo, task title, documents */}
+        <div className="px-6 py-2.5 flex items-center justify-between gap-6">
+          <div className="flex items-center gap-5 min-w-0">
+            <a href="/" className="flex items-center gap-2 flex-shrink-0">
               <div className="w-7 h-7 bg-stone-900 rounded-sm flex items-center justify-center">
                 <GitCompare className="w-4 h-4 text-white" strokeWidth={2.5} />
               </div>
               <span className="font-mono font-semibold tracking-tight text-base">diffdoc</span>
             </a>
-            <div className="px-3 py-1.5 rounded-md bg-stone-100 text-stone-700 flex items-center gap-2 text-sm">
-              <FileText className="w-3.5 h-3.5" />
-              <span className="font-medium">{comparison.doc_a_name ?? "Document A"}</span>
-              <span className="text-stone-400">vs</span>
-              <span className="font-medium">{comparison.doc_b_name ?? "Document B"}</span>
-            </div>
+            <div className="w-px h-5 bg-stone-200 flex-shrink-0" />
+            {editingTitle ? (
+              <form
+                className="flex items-center gap-1.5 min-w-0"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void saveTitle();
+                }}
+              >
+                <input
+                  autoFocus
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onKeyDown={(e) => e.key === "Escape" && setEditingTitle(false)}
+                  maxLength={120}
+                  className="text-sm font-semibold text-stone-900 border border-stone-300 rounded px-2 py-1 w-72 focus:outline-none focus:ring-1 focus:ring-stone-900"
+                />
+                <button type="submit" className="p-1 text-green-700 hover:bg-green-50 rounded" aria-label="Save title">
+                  <Check className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingTitle(false)}
+                  className="p-1 text-stone-400 hover:bg-stone-50 rounded"
+                  aria-label="Cancel"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </form>
+            ) : (
+              <button
+                onClick={() => {
+                  setTitleDraft(title);
+                  setEditingTitle(true);
+                }}
+                title="Rename this comparison"
+                className="group flex items-center gap-1.5 min-w-0 text-sm font-semibold text-stone-900 hover:text-stone-700"
+              >
+                <span className="truncate">{title}</span>
+                <Pencil className="w-3 h-3 text-stone-300 group-hover:text-stone-500 flex-shrink-0" />
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-xs flex-shrink-0">
+            <DocBadge role="Primary" name={comparison.doc_a_name} />
+            <ArrowLeftRight className="w-3 h-3 text-stone-300" />
+            <DocBadge role="Comparator" name={comparison.doc_b_name} />
           </div>
         </div>
 
-        <div className="px-6 py-3 bg-gradient-to-r from-amber-50 to-stone-50 border-t border-stone-100 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-stone-700">
-            <Sparkles className="w-4 h-4 text-amber-700" />
-            <span>
-              Recommended view{" "}
-              <span className="font-semibold text-stone-900">
-                {MODE_META[recommended]?.label ?? recommended}
-              </span>
+        {/* Row 2 — toolbar: search, jump, navigation, views */}
+        <div className="px-6 py-2 bg-stone-50/70 border-t border-stone-100 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2 min-w-0">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                runSearch();
+              }}
+              className="flex items-center bg-white border border-stone-200 rounded-md overflow-hidden"
+            >
+              <Search className="w-3.5 h-3.5 text-stone-400 ml-2 flex-shrink-0" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search text…"
+                className="px-2 py-1.5 text-xs w-44 focus:outline-none"
+              />
+              {query && (
+                <button type="button" onClick={clearSearch} className="p-1 text-stone-300 hover:text-stone-600" aria-label="Clear search">
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+              <select
+                value={scope}
+                onChange={(e) => setScope(e.target.value as SearchScope)}
+                className="text-xs text-stone-600 bg-stone-50 border-l border-stone-200 px-1.5 py-1.5 focus:outline-none"
+                aria-label="Search scope"
+              >
+                <option value="both">Both</option>
+                <option value="a">Primary</option>
+                <option value="b">Comparator</option>
+              </select>
+            </form>
+            {matches.length > 0 && (
+              <div className="flex items-center gap-0.5 text-xs text-stone-600">
+                <span className="font-mono">
+                  {matchIndex + 1}/{matches.length}
+                </span>
+                <button onClick={() => goToMatch(matchIndex - 1)} className="p-1 hover:bg-stone-100 rounded" aria-label="Previous match">
+                  <ChevronUp className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={() => goToMatch(matchIndex + 1)} className="p-1 hover:bg-stone-100 rounded" aria-label="Next match">
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+            {lastSearch.current && matches.length === 0 && (
+              <span className="text-xs text-stone-400">No matches</span>
+            )}
+            {jump.targets.length > 0 && (
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  handleJumpSelect(e.target.value);
+                  e.target.value = "";
+                }}
+                className="text-xs text-stone-600 bg-white border border-stone-200 rounded-md px-2 py-1.5 max-w-48 focus:outline-none"
+                aria-label="Jump to"
+              >
+                <option value="" disabled>
+                  Jump to…
+                </option>
+                {jump.targets.map((t, i) => (
+                  <option key={i} value={t.offset}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-xs text-stone-500 flex items-center gap-1.5 mr-1">
+              <Sparkles className="w-3.5 h-3.5 text-amber-700" />
               {similarity != null && (
                 <>
-                  {" "}
-                  · similarity{" "}
-                  <span className="font-mono font-semibold">{similarity}%</span>
+                  <span className="font-mono font-semibold text-stone-700">{similarity}%</span>
+                  <span>similar ·</span>
                 </>
               )}
+              <span>
+                recommends{" "}
+                <span className="font-medium text-stone-700">
+                  {MODE_META[recommended]?.label ?? recommended}
+                </span>
+              </span>
             </span>
-          </div>
-          <div className="flex items-center gap-2">
             <button
               onClick={scrollBothToTop}
               title="Scroll both documents back to the top"
@@ -437,8 +664,8 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
         </div>
       </header>
 
-      <div className="flex" style={{ height: "calc(100vh - 116px)" }}>
-        <aside className="w-72 border-r border-stone-200 bg-white flex flex-col">
+      <div className="flex-1 min-h-0 flex print-expand">
+        <aside className="w-72 border-r border-stone-200 bg-white flex flex-col print-hide">
           <div className="p-4 border-b border-stone-100">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-500">
@@ -494,7 +721,10 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               return (
                 <button
                   key={entry.id}
-                  onClick={() => jumpTo(entry)}
+                  onClick={() => {
+                    if (mode !== "side_by_side") setMode("side_by_side");
+                    jumpTo(entry);
+                  }}
                   className={`w-full text-left px-3 py-2.5 border-l-2 border-b border-stone-100 hover:bg-stone-50 transition-colors ${borderClass} ${
                     isSelected ? "ring-1 ring-stone-900 bg-stone-50" : ""
                   }`}
@@ -502,9 +732,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                   <div className="flex items-center gap-2 mb-1">
                     <EntryIcon entry={entry} />
                     <span className="text-[10px] uppercase tracking-wide text-stone-400 truncate">
-                      {ACTION_LABELS[entry.action]}
-                      {entry.reasons.length > 0 &&
-                        ` · ${entry.reasons.map((r) => FLAG_LABELS[r]).join(" · ")}`}
+                      {entryTag(entry)}
                     </span>
                   </div>
                   <p className="text-sm text-stone-800 leading-snug line-clamp-2">
@@ -521,8 +749,8 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           </div>
         </aside>
 
-        <main className="flex-1 overflow-hidden bg-stone-50">
-          {mode === "side_by_side" ? (
+        <main className="flex-1 overflow-hidden bg-stone-50 print-expand">
+          {mode === "side_by_side" && (
             <div className="flex h-full">
               <DocPane
                 pane="a"
@@ -554,16 +782,37 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 onContextMenu={(e) => handleContextMenu("b", e)}
               />
             </div>
-          ) : (
+          )}
+          {mode === "summary_first" && (
+            <ReportView
+              title={title}
+              createdAt={comparison.created_at}
+              similarity={similarity}
+              primary={{
+                role: "Primary",
+                name: comparison.doc_a_name ?? "Document A",
+                metadata: parsed.doc_a.metadata,
+                hash: comparison.doc_a_hash,
+              }}
+              comparator={{
+                role: "Comparator",
+                name: comparison.doc_b_name ?? "Document B",
+                metadata: parsed.doc_b.metadata,
+                hash: comparison.doc_b_hash,
+              }}
+              entries={entries}
+            />
+          )}
+          {mode === "aligned_sections" && (
             <div className="h-full flex items-center justify-center">
               <div className="max-w-md text-center px-6">
                 <Sparkles className="w-8 h-8 text-amber-700 mx-auto mb-3" />
                 <h2 className="font-semibold text-stone-900 mb-2">
-                  {MODE_META[mode].label} arrives with the AI layer
+                  Aligned sections arrives with the AI layer
                 </h2>
                 <p className="text-sm text-stone-600 mb-4">
-                  Semantic alignment and thematic summaries are part of the next build phase.
-                  Side-by-side shows every literal change today.
+                  Semantic section alignment is part of the next build phase. Side-by-side
+                  shows every literal change today.
                 </p>
                 <button
                   onClick={() => setMode("side_by_side")}
@@ -599,13 +848,13 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
               className="w-full text-left px-3 py-1.5 hover:bg-stone-50 flex items-center gap-2 text-stone-800"
             >
               <Crosshair className="w-3.5 h-3.5 text-stone-500" />
-              Locate in {otherDocName(ctxMenu.pane)}
+              Locate in {ROLE_LABEL[ctxMenu.pane === "a" ? "b" : "a"]}
             </button>
           </div>
         </>
       )}
 
-      <footer className="border-t border-stone-200 bg-white px-6 py-2 flex items-center justify-between text-xs text-stone-500 font-mono">
+      <footer className="border-t border-stone-200 bg-white px-6 py-2 flex items-center justify-between text-xs text-stone-500 font-mono print-hide">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5">
             <Hash className="w-3 h-3" />
@@ -613,8 +862,20 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           </span>
           <span>{new Date(comparison.created_at).toLocaleString()}</span>
         </div>
-        <span>v0.1.0-beta</span>
+        <BuildStamp />
       </footer>
+    </div>
+  );
+}
+
+function DocBadge({ role, name }: { role: string; name: string | null }) {
+  return (
+    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 rounded-md min-w-0 max-w-56">
+      <span className="text-[10px] uppercase tracking-wider font-semibold text-stone-400 flex-shrink-0">
+        {role}
+      </span>
+      <FileText className="w-3 h-3 text-stone-400 flex-shrink-0" />
+      <span className="font-medium text-stone-700 truncate">{name ?? "—"}</span>
     </div>
   );
 }
@@ -627,6 +888,18 @@ function EntryIcon({ entry }: { entry: RegisterEntry }) {
   if (entry.action === "deletion")
     return <Minus className="w-3 h-3 text-stone-500 flex-shrink-0" />;
   return <Repeat className="w-3 h-3 text-amber-700 flex-shrink-0" />;
+}
+
+function entryTag(entry: RegisterEntry): string {
+  const action =
+    entry.action === "addition"
+      ? "Added in Comparator"
+      : entry.action === "deletion"
+        ? "Removed from Primary"
+        : ACTION_LABELS[entry.action];
+  return entry.reasons.length > 0
+    ? `${action} · ${entry.reasons.map((r) => FLAG_LABELS[r]).join(" · ")}`
+    : action;
 }
 
 function entrySnippet(entry: RegisterEntry): string {
@@ -715,11 +988,20 @@ function DocPane({
 
   return (
     <div className="flex-1 flex flex-col bg-white min-w-0">
-      <div className="px-6 py-2.5 border-b border-stone-100 bg-stone-50/50">
-        <div className="text-sm font-medium text-stone-900 truncate">{label}</div>
-        <div className="text-xs text-stone-500">
-          {meta?.pageCount ? `${meta.pageCount} pages · ` : ""}
-          {meta?.wordCount ? `${meta.wordCount.toLocaleString()} words` : ""}
+      <div className="px-6 py-2.5 border-b border-stone-100 bg-stone-50/50 flex items-center gap-2">
+        <span
+          className={`text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded ${
+            pane === "a" ? "bg-stone-900 text-white" : "bg-stone-200 text-stone-600"
+          }`}
+        >
+          {ROLE_LABEL[pane]}
+        </span>
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-stone-900 truncate">{label}</div>
+          <div className="text-xs text-stone-500">
+            {meta?.pageCount ? `${meta.pageCount} pages · ` : ""}
+            {meta?.wordCount ? `${meta.wordCount.toLocaleString()} words` : ""}
+          </div>
         </div>
       </div>
       <div

@@ -13,7 +13,7 @@ export async function GET(): Promise<Response> {
   const supabase = getServiceClient();
   const { data, error } = await supabase
     .from("comparisons")
-    .select("id, doc_a_name, doc_b_name, similarity_score, status, created_at")
+    .select("id, title, doc_a_name, doc_b_name, similarity_score, status, created_at")
     .order("created_at", { ascending: false })
     .limit(20);
   if (error) {

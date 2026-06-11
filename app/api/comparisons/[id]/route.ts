@@ -25,7 +25,7 @@ export async function GET(
   const { data: comparison, error } = await supabase
     .from("comparisons")
     .select(
-      "id, doc_a_name, doc_b_name, doc_a_hash, doc_b_hash, similarity_score, view_mode, status, created_at",
+      "id, title, doc_a_name, doc_b_name, doc_a_hash, doc_b_hash, similarity_score, view_mode, status, created_at",
     )
     .eq("id", id)
     .single();
@@ -50,6 +50,54 @@ export async function GET(
   }
 
   return NextResponse.json({ comparison, differences: differences ?? [], parsed });
+}
+
+const MAX_TITLE_LENGTH = 120;
+
+/** PATCH /api/comparisons/[id] — body: { title }. Renames the task. */
+export async function PATCH(
+  request: Request,
+  { params }: { params: { id: string } },
+): Promise<Response> {
+  const { id } = params;
+  if (!UUID_RE.test(id)) {
+    return NextResponse.json({ error: "Invalid comparison id." }, { status: 400 });
+  }
+  let title: unknown;
+  try {
+    ({ title } = await request.json());
+  } catch {
+    return NextResponse.json({ error: "Expected JSON body." }, { status: 400 });
+  }
+  if (typeof title !== "string" || !title.trim() || title.length > MAX_TITLE_LENGTH) {
+    return NextResponse.json(
+      { error: `title must be 1–${MAX_TITLE_LENGTH} characters.` },
+      { status: 400 },
+    );
+  }
+
+  const supabase = getServiceClient();
+  const trimmed = title.trim();
+  const { data, error } = await supabase
+    .from("comparisons")
+    .update({ title: trimmed })
+    .eq("id", id)
+    .select("id, title")
+    .maybeSingle();
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!data) {
+    return NextResponse.json({ error: "Comparison not found." }, { status: 404 });
+  }
+
+  await supabase.from("audit_events").insert({
+    comparison_id: id,
+    event_type: "comparison_renamed",
+    payload_jsonb: { title: trimmed },
+  });
+
+  return NextResponse.json({ comparison: data });
 }
 
 async function downloadParsed(comparisonId: string): Promise<unknown | null> {

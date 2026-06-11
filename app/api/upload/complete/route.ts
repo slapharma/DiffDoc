@@ -89,8 +89,10 @@ export async function POST(request: Request): Promise<Response> {
     comparison_id: comparisonId,
     event_type: "comparison_created",
     payload_jsonb: {
-      doc_a: { filename: a.name, sha256: a.hash },
-      doc_b: { filename: b.name, sha256: b.hash },
+      // doc_a is the Primary document, doc_b the Comparator — this role
+      // convention is fixed and referenced by all feature/action events.
+      doc_a: { role: "primary", filename: a.name, sha256: a.hash },
+      doc_b: { role: "comparator", filename: b.name, sha256: b.hash },
     },
   });
   if (auditError) {

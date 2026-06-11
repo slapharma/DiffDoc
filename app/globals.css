@@ -9,3 +9,15 @@ body {
   color: #1c1917;
   -webkit-font-smoothing: antialiased;
 }
+
+/* Print = "Download PDF" for the Report tab: hide app chrome, unclip the
+   fixed-height workspace containers so the full report flows across pages. */
+@media print {
+  .print-hide {
+    display: none !important;
+  }
+  .print-expand {
+    height: auto !important;
+    overflow: visible !important;
+  }
+}
