@@ -9,6 +9,8 @@ export type Segment = {
   op: DiffOp;
   /** Index of the source chunk in the full stream — used for UI anchors. */
   chunkIndex: number;
+  /** Absolute start offset of this segment in the side's plain text. */
+  start: number;
 };
 
 /** Characters a chunk occupies in one side's plain-text projection. */
@@ -46,6 +48,7 @@ export function projectRange(
       text: chunk.text.slice(from - chunkStart, to - chunkStart),
       op: chunk.op,
       chunkIndex: i,
+      start: from,
     });
   }
   return segments;

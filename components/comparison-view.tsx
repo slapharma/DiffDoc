@@ -13,7 +13,9 @@ import {
   GitCompare,
   Hash,
   LayoutGrid,
+  MessageSquare,
   Pencil,
+  RotateCcw,
   Save,
   Search,
   X,
@@ -52,6 +54,24 @@ export type ParagraphSkeleton = {
   page?: number;
 };
 
+export type CommentRow = {
+  id: string;
+  doc_side: "a" | "b";
+  location: { offset: number; length: number };
+  text: string;
+  resolved: boolean;
+  created_at: string;
+};
+
+export type EditRow = {
+  id: string;
+  doc_side: "a" | "b";
+  location: { offset: number; length: number };
+  before_text: string | null;
+  after_text: string | null;
+  created_at: string;
+};
+
 export type ComparisonData = {
   comparison: {
     id: string;
@@ -75,6 +95,8 @@ export type ComparisonData = {
     };
     chunks: DiffChunk[];
   };
+  comments: CommentRow[];
+  edits: EditRow[];
 };
 
 type ModeId = "side_by_side" | "summary_first";
@@ -119,6 +141,17 @@ type SearchScope = "a" | "b" | "both";
 
 type ContextMenuState = { x: number; y: number; pane: Pane; index: number };
 
+type SelectionAction = {
+  pane: Pane;
+  offset: number;
+  length: number;
+  text: string;
+  x: number;
+  y: number;
+};
+
+type ComposerState = SelectionAction & { kind: "comment" | "edit"; value: string };
+
 export function ComparisonView({ data }: { data: ComparisonData }) {
   const { comparison, parsed } = data;
   const [mode, setMode] = useState<ModeId>("side_by_side");
@@ -128,6 +161,15 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
   const [flash, setFlash] = useState<{ pane: Pane; index: number } | null>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+
+  // Annotations: comments on both documents, edits on Primary only.
+  const [comments, setComments] = useState<CommentRow[]>(data.comments);
+  const [edits, setEdits] = useState<EditRow[]>(data.edits);
+  const [selAction, setSelAction] = useState<SelectionAction | null>(null);
+  const [composer, setComposer] = useState<ComposerState | null>(null);
+  const [composerBusy, setComposerBusy] = useState(false);
+  const selActionRef = useRef<SelectionAction | null>(null);
+  selActionRef.current = selAction;
   const [activeCategories, setActiveCategories] = useState<Set<Category>>(
     () => new Set(["flagged", "added", "removed", "changed"]),
   );
@@ -248,6 +290,7 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     // feedback loop and no timing locks. The mapping is O(log n) with no
     // layout reads, so it runs synchronously — scroll events are already
     // frame-aligned and deferring to rAF only adds lag.
+    if (selActionRef.current) setSelAction(null); // selection bar drifts on scroll
     if (!syncOn || mode !== "side_by_side") return;
     if (activePane.current !== pane) return;
     const map = anchorsRef.current;
@@ -478,6 +521,128 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
     if (y === null) return;
     centerOn(other, y);
     if (targetIndex !== null) flashChunk(other, targetIndex);
+  }
+
+  /**
+   * Text selection inside a pane offers Comment (both documents) and Edit
+   * (Primary only). v1 constraint: the selection must stay within a single
+   * rendered span so it maps to one contiguous range of the side's text.
+   */
+  function handleSelection(pane: Pane) {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+      setSelAction(null);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    const spanOf = (node: Node | null) =>
+      (node instanceof Element ? node : node?.parentElement)?.closest?.(
+        "[data-off]",
+      ) as HTMLElement | null;
+    const startSpan = spanOf(range.startContainer);
+    const endSpan = spanOf(range.endContainer);
+    if (!startSpan || startSpan !== endSpan) {
+      setSelAction(null);
+      return;
+    }
+    if (!startSpan.dataset.chunk?.startsWith(`${pane}-`)) return;
+    const base = Number(startSpan.dataset.off);
+    const offset = base + Math.min(range.startOffset, range.endOffset);
+    const length = Math.abs(range.endOffset - range.startOffset);
+    if (length === 0) {
+      setSelAction(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    setSelAction({
+      pane,
+      offset,
+      length,
+      text: range.toString(),
+      x: rect.left + rect.width / 2,
+      y: rect.top,
+    });
+  }
+
+  function openComposer(kind: "comment" | "edit") {
+    if (!selAction) return;
+    setComposer({
+      ...selAction,
+      kind,
+      value: kind === "edit" ? selAction.text : "",
+    });
+    setSelAction(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  async function submitComposer() {
+    if (!composer || composerBusy) return;
+    const value = composer.value.trim();
+    if (!value) return;
+    setComposerBusy(true);
+    try {
+      if (composer.kind === "comment") {
+        const res = await fetch(`/api/comparisons/${comparison.id}/comments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            doc_side: composer.pane,
+            location: { offset: composer.offset, length: composer.length },
+            text: value,
+          }),
+        });
+        if (res.ok) {
+          const { comment } = await res.json();
+          setComments((prev) => [...prev, comment]);
+        }
+      } else {
+        const res = await fetch(`/api/comparisons/${comparison.id}/edits`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            doc_side: "a",
+            location: { offset: composer.offset, length: composer.length },
+            before_text: composer.text,
+            after_text: value,
+          }),
+        });
+        if (res.ok) {
+          const { edit } = await res.json();
+          setEdits((prev) => [...prev, edit]);
+        }
+      }
+      setComposer(null);
+    } finally {
+      setComposerBusy(false);
+    }
+  }
+
+  async function toggleResolve(comment: CommentRow) {
+    const next = !comment.resolved;
+    setComments((prev) =>
+      prev.map((c) => (c.id === comment.id ? { ...c, resolved: next } : c)),
+    ); // optimistic
+    const res = await fetch(
+      `/api/comparisons/${comparison.id}/comments/${comment.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolved: next }),
+      },
+    );
+    if (!res.ok) {
+      setComments((prev) =>
+        prev.map((c) => (c.id === comment.id ? { ...c, resolved: !next } : c)),
+      );
+    }
+  }
+
+  function jumpToComment(comment: CommentRow) {
+    const index = chunkAtOffset(parsed.chunks, comment.doc_side, comment.location.offset);
+    if (index === null) return;
+    if (mode !== "side_by_side") setMode("side_by_side");
+    revealChunk(comment.doc_side, index, syncOn);
+    flashChunk(comment.doc_side, index);
   }
 
   function toggleIn<T>(set: Set<T>, value: T, update: (next: Set<T>) => void) {
@@ -748,6 +913,59 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
             </div>
           </div>
 
+          {/* Notes: comments on either document */}
+          {comments.length > 0 && (
+            <div className="p-3 border-b border-line">
+              <div className="flex items-baseline justify-between mb-2">
+                <h3 className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-ink-faint">
+                  Notes
+                </h3>
+                <span className="font-mono text-xs font-bold text-note">
+                  {comments.filter((c) => !c.resolved).length} open
+                </span>
+              </div>
+              <div className="max-h-44 overflow-y-auto space-y-1.5">
+                {comments.map((c) => (
+                  <div
+                    key={c.id}
+                    className={`flex items-start gap-2 px-2 py-1.5 rounded-lg border border-line bg-paper ${
+                      c.resolved ? "opacity-50" : ""
+                    }`}
+                  >
+                    <button
+                      onClick={() => jumpToComment(c)}
+                      className="flex-1 min-w-0 text-left cursor-pointer"
+                      title="Show in document"
+                    >
+                      <span className="text-[9px] font-mono font-bold uppercase tracking-[0.15em] text-note block">
+                        {ROLE_LABEL[c.doc_side]}
+                      </span>
+                      <span
+                        className={`text-xs font-serif text-ink leading-snug line-clamp-2 ${
+                          c.resolved ? "line-through" : ""
+                        }`}
+                      >
+                        {c.text}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => void toggleResolve(c)}
+                      title={c.resolved ? "Reopen" : "Resolve"}
+                      aria-label={c.resolved ? "Reopen comment" : "Resolve comment"}
+                      className="p-1 rounded hover:bg-paper-deep cursor-pointer flex-shrink-0"
+                    >
+                      {c.resolved ? (
+                        <RotateCcw className="w-3 h-3 text-ink-faint" />
+                      ) : (
+                        <Check className="w-3 h-3 text-leaf-deep" />
+                      )}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Register */}
           <div className="p-3 border-b border-line">
             <div className="flex items-baseline justify-between mb-1.5">
@@ -862,12 +1080,15 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 chunks={parsed.chunks}
                 selectedIndex={selectedIndices.a}
                 flashIndex={flash?.pane === "a" ? flash.index : null}
+                edits={edits.filter((e) => e.doc_side === "a")}
+                comments={comments.filter((c) => c.doc_side === "a" && !c.resolved)}
                 scrollRef={paneARef}
                 onScroll={() => handlePaneScroll("a")}
                 onActivate={() => {
                   activePane.current = "a";
                 }}
                 onContextMenu={(e) => handleContextMenu("a", e)}
+                onMouseUp={() => handleSelection("a")}
               />
               <DocPane
                 pane="b"
@@ -876,12 +1097,15 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 chunks={parsed.chunks}
                 selectedIndex={selectedIndices.b}
                 flashIndex={flash?.pane === "b" ? flash.index : null}
+                edits={[]}
+                comments={comments.filter((c) => c.doc_side === "b" && !c.resolved)}
                 scrollRef={paneBRef}
                 onScroll={() => handlePaneScroll("b")}
                 onActivate={() => {
                   activePane.current = "b";
                 }}
                 onContextMenu={(e) => handleContextMenu("b", e)}
+                onMouseUp={() => handleSelection("b")}
               />
             </div>
           ) : (
@@ -906,6 +1130,107 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
           )}
         </main>
       </div>
+
+      {selAction && !composer && (
+        <div
+          className="fixed z-50 bg-ink text-paper rounded-lg shadow-lg flex items-center overflow-hidden"
+          style={{
+            left: Math.max(8, Math.min(selAction.x - 90, window.innerWidth - 200)),
+            top: Math.max(8, selAction.y - 44),
+          }}
+        >
+          <button
+            onClick={() => openComposer("comment")}
+            className="px-3 py-2 text-xs font-medium flex items-center gap-1.5 hover:bg-ink/80 cursor-pointer"
+          >
+            <MessageSquare className="w-3.5 h-3.5 text-note" /> Comment
+          </button>
+          {selAction.pane === "a" && (
+            <>
+              <span className="w-px h-4 bg-paper/20" />
+              <button
+                onClick={() => openComposer("edit")}
+                className="px-3 py-2 text-xs font-medium flex items-center gap-1.5 hover:bg-ink/80 cursor-pointer"
+              >
+                <Pencil className="w-3.5 h-3.5 text-pen-wash" /> Edit
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {composer && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setComposer(null)} />
+          <div
+            className="fixed z-50 bg-white border border-ink/20 rounded-lg shadow-xl p-3 w-80"
+            style={{
+              left: Math.max(8, Math.min(composer.x - 160, window.innerWidth - 340)),
+              top: Math.min(composer.y + 14, window.innerHeight - 220),
+            }}
+          >
+            <div className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-ink-faint mb-1.5">
+              {composer.kind === "comment"
+                ? `Comment · ${ROLE_LABEL[composer.pane]}`
+                : "Edit · Primary"}
+            </div>
+            <p className="text-xs font-serif italic text-ink-soft mb-2 line-clamp-2">
+              “{composer.text.trim().slice(0, 90)}
+              {composer.text.trim().length > 90 ? "…" : ""}”
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submitComposer();
+              }}
+            >
+              {composer.kind === "comment" ? (
+                <textarea
+                  autoFocus
+                  value={composer.value}
+                  onChange={(e) => setComposer({ ...composer, value: e.target.value })}
+                  onKeyDown={(e) => e.key === "Escape" && setComposer(null)}
+                  placeholder="Add a note…"
+                  rows={3}
+                  maxLength={2000}
+                  className="w-full text-sm font-serif border border-line rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-note resize-none"
+                />
+              ) : (
+                <textarea
+                  autoFocus
+                  value={composer.value}
+                  onChange={(e) => setComposer({ ...composer, value: e.target.value })}
+                  onKeyDown={(e) => e.key === "Escape" && setComposer(null)}
+                  placeholder="Replacement text…"
+                  rows={3}
+                  maxLength={5000}
+                  className="w-full text-sm font-serif border border-line rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-pen resize-none"
+                />
+              )}
+              <div className="flex items-center justify-end gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setComposer(null)}
+                  className="px-3 py-1.5 text-xs text-ink-soft hover:text-ink cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={composerBusy || !composer.value.trim()}
+                  className={`px-4 py-1.5 text-xs font-medium rounded-lg text-white disabled:opacity-40 cursor-pointer ${
+                    composer.kind === "comment"
+                      ? "bg-note hover:bg-note/85"
+                      : "bg-pen hover:bg-pen/85"
+                  }`}
+                >
+                  {composer.kind === "comment" ? "Add comment" : "Save edit"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </>
+      )}
 
       {ctxMenu && (
         <>
@@ -1047,10 +1372,13 @@ function DocPane({
   chunks,
   selectedIndex,
   flashIndex,
+  edits,
+  comments,
   scrollRef,
   onScroll,
   onActivate,
   onContextMenu,
+  onMouseUp,
 }: {
   pane: Pane;
   label: string;
@@ -1058,14 +1386,102 @@ function DocPane({
   chunks: DiffChunk[];
   selectedIndex: number | null;
   flashIndex: number | null;
+  edits: EditRow[];
+  comments: CommentRow[];
   scrollRef: React.RefObject<HTMLDivElement>;
   onScroll: () => void;
   onActivate: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onMouseUp: () => void;
 }) {
   const meta = doc.metadata;
   const paragraphs = doc.paragraphs;
   const hidden = pane === "a" ? "insert" : "delete";
+
+  /**
+   * Render one segment, split at edit/comment boundaries. Edits show the
+   * original struck in editor's violet with the replacement inked in after;
+   * commented ranges get a dotted amber underline. Plain segments take the
+   * fast path.
+   */
+  function renderSegment(
+    seg: { text: string; op: DiffChunk["op"]; chunkIndex: number; start: number },
+    keyBase: string,
+  ) {
+    const baseCls = segmentClass(
+      seg.op,
+      selectedIndex === seg.chunkIndex,
+      flashIndex === seg.chunkIndex,
+    );
+    const segStart = seg.start;
+    const segEnd = seg.start + seg.text.length;
+    const segEdits = edits.filter(
+      (e) => e.location.offset < segEnd && e.location.offset + e.location.length > segStart,
+    );
+    const segComments = comments.filter(
+      (c) => c.location.offset < segEnd && c.location.offset + c.location.length > segStart,
+    );
+    if (segEdits.length === 0 && segComments.length === 0) {
+      return (
+        <span
+          key={keyBase}
+          data-chunk={`${pane}-${seg.chunkIndex}`}
+          data-off={segStart}
+          className={baseCls}
+        >
+          {seg.text}
+        </span>
+      );
+    }
+
+    const cuts = new Set<number>([segStart, segEnd]);
+    for (const r of [...segEdits, ...segComments]) {
+      cuts.add(Math.max(segStart, r.location.offset));
+      cuts.add(Math.min(segEnd, r.location.offset + r.location.length));
+    }
+    const points = [...cuts].sort((x, y) => x - y);
+    const out: React.ReactNode[] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const s = points[i];
+      const e = points[i + 1];
+      if (e <= s) continue;
+      const inEdit = segEdits.find(
+        (ed) => ed.location.offset <= s && ed.location.offset + ed.location.length >= e,
+      );
+      const inComment = segComments.find(
+        (c) => c.location.offset <= s && c.location.offset + c.location.length >= e,
+      );
+      let cls = baseCls;
+      if (inEdit) cls += " line-through decoration-pen text-ink-faint bg-pen-wash";
+      if (inComment)
+        cls += " underline decoration-dotted decoration-note decoration-2 underline-offset-4";
+      out.push(
+        <span
+          key={`${keyBase}.${i}`}
+          data-chunk={`${pane}-${seg.chunkIndex}`}
+          data-off={s}
+          className={cls}
+          title={inComment ? inComment.text : undefined}
+        >
+          {seg.text.slice(s - segStart, e - segStart)}
+        </span>,
+      );
+      for (const ed of segEdits) {
+        if (ed.location.offset + ed.location.length === e && ed.after_text) {
+          out.push(
+            <span
+              key={`${keyBase}.${i}.after`}
+              className="text-pen bg-pen-wash rounded px-0.5 font-medium"
+              title="Edited on Primary"
+            >
+              {ed.after_text}
+            </span>,
+          );
+        }
+      }
+    }
+    return out;
+  }
 
   return (
     <div className="flex-1 flex flex-col min-w-0">
@@ -1094,6 +1510,7 @@ function DocPane({
           onWheel={onActivate}
           onTouchStart={onActivate}
           onContextMenu={onContextMenu}
+          onMouseUp={onMouseUp}
           className="flex-1 overflow-y-auto px-8 py-6"
         >
           <div className="max-w-2xl mx-auto font-serif">
@@ -1104,19 +1521,7 @@ function DocPane({
                 return (
                   <p key={pi} className={PARAGRAPH_CLASS[p.style] ?? PARAGRAPH_CLASS.body}>
                     {p.style === "list" && <span className="select-none">•&nbsp;</span>}
-                    {segments.map((s, si) => (
-                      <span
-                        key={si}
-                        data-chunk={`${pane}-${s.chunkIndex}`}
-                        className={segmentClass(
-                          s.op,
-                          selectedIndex === s.chunkIndex,
-                          flashIndex === s.chunkIndex,
-                        )}
-                      >
-                        {s.text}
-                      </span>
-                    ))}
+                    {segments.map((s, si) => renderSegment(s, `${pi}-${si}`))}
                   </p>
                 );
               })
@@ -1126,18 +1531,14 @@ function DocPane({
               <div className="text-ink leading-relaxed whitespace-pre-wrap break-words">
                 {chunks.map((chunk, index) => {
                   if (chunk.op === hidden) return null;
-                  return (
-                    <span
-                      key={index}
-                      data-chunk={`${pane}-${index}`}
-                      className={segmentClass(
-                        chunk.op,
-                        selectedIndex === index,
-                        flashIndex === index,
-                      )}
-                    >
-                      {chunk.text}
-                    </span>
+                  return renderSegment(
+                    {
+                      text: chunk.text,
+                      op: chunk.op,
+                      chunkIndex: index,
+                      start: pane === "a" ? chunk.offsetA : chunk.offsetB,
+                    },
+                    `f${index}`,
                   );
                 })}
               </div>

@@ -37,19 +37,36 @@ export async function GET(
     return NextResponse.json({ comparison, differences: [], parsed: null });
   }
 
-  const [{ data: differences, error: diffError }, parsed] = await Promise.all([
-    supabase
-      .from("differences")
-      .select("id, location_a, location_b, type, classification, ai_summary, flagged")
-      .eq("comparison_id", id)
-      .order("created_at", { ascending: true }),
-    downloadParsed(id),
-  ]);
+  const [{ data: differences, error: diffError }, parsed, commentsRes, editsRes] =
+    await Promise.all([
+      supabase
+        .from("differences")
+        .select("id, location_a, location_b, type, classification, ai_summary, flagged")
+        .eq("comparison_id", id)
+        .order("created_at", { ascending: true }),
+      downloadParsed(id),
+      supabase
+        .from("comments")
+        .select("id, doc_side, location, text, resolved, created_at")
+        .eq("comparison_id", id)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("edits")
+        .select("id, doc_side, location, before_text, after_text, created_at")
+        .eq("comparison_id", id)
+        .order("created_at", { ascending: true }),
+    ]);
   if (diffError) {
     return NextResponse.json({ error: diffError.message }, { status: 500 });
   }
 
-  return NextResponse.json({ comparison, differences: differences ?? [], parsed });
+  return NextResponse.json({
+    comparison,
+    differences: differences ?? [],
+    parsed,
+    comments: commentsRes.data ?? [],
+    edits: editsRes.data ?? [],
+  });
 }
 
 const MAX_TITLE_LENGTH = 120;

@@ -29,6 +29,16 @@ const config: Config = {
           DEFAULT: "#E04E33",
           wash: "#FBEAE4",
         },
+        /** Editor's ink — user-made edits on the Primary document. */
+        pen: {
+          DEFAULT: "#7048C6",
+          wash: "#F0EAFB",
+        },
+        /** Marginal notes — commented ranges. */
+        note: {
+          DEFAULT: "#C8821A",
+          wash: "#FBF3E2",
+        },
       },
       fontFamily: {
         sans: ["var(--font-inter)", "Inter", "-apple-system", "sans-serif"],

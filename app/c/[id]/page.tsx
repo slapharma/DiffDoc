@@ -19,6 +19,15 @@ export default function ComparisonPage({ params }: { params: { id: string } }) {
     if (!res.ok) return "failed";
     const body = await res.json();
     const s: Status = body.comparison.status;
+    if (s === "complete" && body.parsed) {
+      setData({
+        comparison: body.comparison,
+        parsed: body.parsed,
+        comments: body.comments ?? [],
+        edits: body.edits ?? [],
+      });
+      return s;
+    }
     if (s === "pending" && !processTriggered.current) {
       // Self-healing: if the upload page's fire-and-forget trigger was lost,
       // (re)start processing from here. The process route only accepts
@@ -29,9 +38,6 @@ export default function ComparisonPage({ params }: { params: { id: string } }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ comparison_id: params.id }),
       });
-    }
-    if (s === "complete" && body.parsed) {
-      setData({ comparison: body.comparison, parsed: body.parsed });
     }
     return s;
   }, [params.id]);
