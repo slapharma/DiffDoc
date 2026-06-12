@@ -32,6 +32,7 @@ import {
   chunkAtOffset,
   jumpTargets,
   searchSide,
+  sideText,
   type JumpTarget,
   type SearchMatch,
 } from "@/lib/diff/navigate";
@@ -1126,6 +1127,19 @@ export function ComparisonView({ data }: { data: ComparisonData }) {
                 hash: comparison.doc_b_hash,
               }}
               entries={entries}
+              comments={comments.map((c) => ({
+                role: ROLE_LABEL[c.doc_side],
+                quote: sideText(parsed.chunks, c.doc_side).slice(
+                  c.location.offset,
+                  c.location.offset + c.location.length,
+                ),
+                text: c.text,
+                resolved: c.resolved,
+              }))}
+              edits={edits.map((e) => ({
+                quote: e.before_text ?? "",
+                replacement: e.after_text ?? "",
+              }))}
             />
           )}
         </main>

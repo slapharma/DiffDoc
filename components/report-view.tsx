@@ -13,6 +13,15 @@ type DocProfile = {
 
 export type ReportEntry = ChangeEntry & { reasons: FlagReason[] };
 
+export type ReportComment = {
+  role: string;
+  quote: string;
+  text: string;
+  resolved: boolean;
+};
+
+export type ReportEdit = { quote: string; replacement: string };
+
 export function ReportView({
   title,
   createdAt,
@@ -20,6 +29,8 @@ export function ReportView({
   primary,
   comparator,
   entries,
+  comments = [],
+  edits = [],
 }: {
   title: string;
   createdAt: string;
@@ -27,6 +38,8 @@ export function ReportView({
   primary: DocProfile;
   comparator: DocProfile;
   entries: ReportEntry[];
+  comments?: ReportComment[];
+  edits?: ReportEdit[];
 }) {
   const flagged = entries.filter((e) => e.reasons.length > 0);
   const actionCounts = new Map<ChangeAction, number>();
@@ -152,6 +165,72 @@ export function ReportView({
               ))}
               {largestDeletions.map((entry, i) => (
                 <HighlightCard key={`d${i}`} entry={entry} tone="stone" />
+              ))}
+            </div>
+          </>
+        )}
+
+        {edits.length > 0 && (
+          <>
+            <SectionTitle>
+              Editor&apos;s changes to Primary{" "}
+              <span className="font-normal normal-case text-ink-faint">({edits.length})</span>
+            </SectionTitle>
+            <div className="space-y-2 mb-8">
+              {edits.map((e, i) => (
+                <div
+                  key={i}
+                  className="bg-white border border-line border-l-2 border-l-pen rounded-xl px-4 py-3"
+                >
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-pen mb-1">
+                    Edit · Primary
+                  </div>
+                  <div className="text-sm text-ink font-serif">
+                    <span className="line-through text-ink-faint bg-paper-deep px-1 rounded decoration-pen">
+                      {clip(e.quote) || "(empty)"}
+                    </span>
+                    <span className="text-ink-faint mx-1.5">→</span>
+                    <span className="bg-pen-wash text-pen px-1 rounded font-medium">
+                      {clip(e.replacement) || "(deleted)"}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {comments.length > 0 && (
+          <>
+            <SectionTitle>
+              Reviewer notes{" "}
+              <span className="font-normal normal-case text-ink-faint">
+                ({comments.filter((c) => !c.resolved).length} open
+                {comments.some((c) => c.resolved)
+                  ? `, ${comments.filter((c) => c.resolved).length} resolved`
+                  : ""}
+                )
+              </span>
+            </SectionTitle>
+            <div className="space-y-2 mb-8">
+              {comments.map((c, i) => (
+                <div
+                  key={i}
+                  className={`bg-white border border-line border-l-2 border-l-note rounded-xl px-4 py-3 ${
+                    c.resolved ? "opacity-60" : ""
+                  }`}
+                >
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-note mb-1">
+                    {c.role}
+                    {c.resolved ? " · resolved" : ""}
+                  </div>
+                  <p className="text-xs font-serif italic text-ink-soft mb-1">
+                    “{clip(c.quote, 120)}”
+                  </p>
+                  <p className={`text-sm text-ink font-serif ${c.resolved ? "line-through" : ""}`}>
+                    {c.text}
+                  </p>
+                </div>
               ))}
             </div>
           </>
