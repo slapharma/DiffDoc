@@ -1,23 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Clock, FileText, Loader2, Upload, X } from "lucide-react";
+import { FileText, LayoutGrid, Loader2, Upload, X } from "lucide-react";
 
 type Side = "a" | "b";
 
 import { BuildStamp } from "@/components/build-stamp";
 import { Wordmark } from "@/components/wordmark";
-
-type RecentComparison = {
-  id: string;
-  title: string | null;
-  doc_a_name: string | null;
-  doc_b_name: string | null;
-  similarity_score: number | null;
-  status: string;
-  created_at: string;
-};
 
 export default function Home() {
   const router = useRouter();
@@ -76,8 +66,14 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-paper text-ink font-sans flex flex-col">
-      <header className="border-b border-line px-8 py-4">
+      <header className="border-b border-line px-8 py-4 flex items-center justify-between">
         <Wordmark />
+        <a
+          href="/tasks"
+          className="px-4 py-1.5 text-xs font-mono font-bold uppercase tracking-[0.12em] rounded-lg text-ink-soft hover:text-ink hover:bg-paper-deep transition-colors cursor-pointer flex items-center gap-1.5"
+        >
+          <LayoutGrid className="w-3.5 h-3.5" /> My Tasks
+        </a>
       </header>
 
       <main className="flex-1 flex items-center justify-center px-6 py-12">
@@ -132,8 +128,6 @@ export default function Home() {
               )}
             </button>
           </div>
-
-          <RecentComparisons />
         </div>
       </main>
 
@@ -170,76 +164,6 @@ async function postJson(
   }
   if (!body) throw new Error("Unexpected non-JSON response from the server.");
   return body;
-}
-
-function RecentComparisons() {
-  const [items, setItems] = useState<RecentComparison[] | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/comparisons", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => {
-        if (!cancelled && body) setItems(body.comparisons);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!items || items.length === 0) return null;
-
-  return (
-    <div className="mt-14">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-[11px] font-mono uppercase tracking-[0.18em] text-ink-faint flex items-center gap-2">
-          <Clock className="w-3.5 h-3.5" /> Recent comparisons
-        </h2>
-        <a href="/tasks" className="text-[11px] font-mono uppercase tracking-[0.12em] text-leaf-deep hover:text-leaf cursor-pointer">
-          My Tasks →
-        </a>
-      </div>
-      <div className="border-t border-line">
-        {items.map((item) => (
-          <a
-            key={item.id}
-            href={`/c/${item.id}`}
-            className="flex items-center gap-3 px-2 py-3 border-b border-line hover:bg-paper-deep transition-colors group"
-          >
-            <FileText className="w-4 h-4 text-ink-faint group-hover:text-leaf flex-shrink-0 transition-colors" />
-            <span className="flex-1 min-w-0 text-sm font-serif text-ink truncate">
-              {item.title ?? (
-                <>
-                  {item.doc_a_name ?? "Primary"}{" "}
-                  <span className="text-ink-faint">vs</span>{" "}
-                  {item.doc_b_name ?? "Comparator"}
-                </>
-              )}
-            </span>
-            {item.status === "complete" && item.similarity_score != null ? (
-              <span className="font-mono text-xs text-leaf-deep font-bold">
-                {item.similarity_score}%
-              </span>
-            ) : (
-              <span
-                className={`text-[11px] font-mono px-2 py-0.5 rounded-full ${
-                  item.status === "failed"
-                    ? "bg-flag-wash text-flag"
-                    : "bg-paper-deep text-ink-soft"
-                }`}
-              >
-                {item.status}
-              </span>
-            )}
-            <span className="text-xs text-ink-faint font-mono w-20 text-right">
-              {new Date(item.created_at).toLocaleDateString()}
-            </span>
-          </a>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function FileSlot({
